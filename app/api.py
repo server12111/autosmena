@@ -88,6 +88,21 @@ def index():
     return FileResponse(static / "index.html")
 
 
+@app.get("/banner/{kind}/{user_id}/{sig}.png")
+def personal_banner(kind: str, user_id: int, sig: str):
+    """Profile and wallet artwork with the user's own data, for Telegram link previews."""
+    from fastapi.responses import Response as Raw
+
+    from app import banners
+
+    if kind not in banners.KINDS or not banners.valid(user_id, sig):
+        raise HTTPException(404)
+    data = banners.user_data(user_id)
+    if data is None:
+        raise HTTPException(404)
+    return Raw(banners.render(kind, data), media_type="image/png")
+
+
 @app.get("/health")
 def health():
     with Session() as db:

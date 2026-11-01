@@ -274,7 +274,13 @@ async def test_screens_show_their_banner_as_large_preview_above_text(database, m
     preview = message.answer.call_args.kwargs["link_preview_options"]
     assert preview.url.startswith("https://cdn.example/brand/main.png?v=")
     assert preview.show_above_text and preview.prefer_large_media
-    for data, name in (("catalog:0", "numbers"), ("profile", "profile"), ("ref", "ref"), ("wallet", "wallet")):
+    for data, name in (
+        ("catalog:0", "buy"),
+        ("orders", "numbers"),
+        ("ref", "ref"),
+        ("profile", "profile"),
+        ("wallet", "wallet"),
+    ):
         bot.last_action.clear()
         event = query(data)
         event.from_user.first_name = "T"

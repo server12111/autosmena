@@ -64,6 +64,7 @@ METHOD_LABELS = {
     "demo": "Тестовое пополнение",
 }
 HOME = ("Меню", "home")
+DOT = "🔴"
 BOT_USERNAME = "SmenaMarketBot"
 
 
@@ -83,6 +84,17 @@ def banner(name):
     version = sha256(path.read_bytes()).hexdigest()[:10]
     base = (settings.banner_base_url or public_url() + "/static/brand").rstrip("/")
     return f"{base}/{name}.png?v={version}"
+
+
+def personal_banner(kind, user_id):
+    """Profile/wallet card with live data, served by this app; plain artwork when images come
+    from an external static host (BANNER_BASE_URL) that cannot render per-user cards."""
+    from app import banners
+
+    data = banners.user_data(user_id)
+    if settings.banner_base_url or data is None:
+        return banner(kind)
+    return f"{public_url()}/banner/{kind}/{user_id}/{banners.signature(user_id)}.png?v={banners.data_version(data)}"
 
 
 def balance_of(user_id):
@@ -118,20 +130,21 @@ async def send_menu(message, user_id, edit=False):
     cheapest = min((sale_price(p) for p in products), default=None)
     prefix = "🧪 <b>Тестовый режим</b> — номера и коды ненастоящие.\n\n" if settings.demo_mode else ""
     if not can_sell():
-        status = "\n<i>Магазин готовится к запуску — покупки скоро откроются.</i>"
+        status = "\n⚡️ <i>Магазин готовится к запуску — покупки скоро откроются.</i>"
     elif not products:
-        status = "\n<i>Номера временно закончились — загляните чуть позже.</i>"
+        status = "\n⚡️ <i>Номера временно закончились — загляните чуть позже.</i>"
     else:
         status = ""
     buy = "Купить номер" + (f" · ${display(cheapest)}" if cheapest is not None else "")
     await show(
         message,
-        f"{prefix}{icon('brand')} <b>SMENA</b> · номера Telegram США\n\n"
-        "Виртуальные номера <b>+1</b> для входа в Telegram.\n"
-        f"• срок аренды — {escape(RENTAL_LABEL.lower())}\n"
-        "• код входа приходит прямо в этот чат\n"
-        "• оплата с баланса, пополнение криптовалютой\n\n"
-        f"<blockquote>Баланс: <b>${display(balance)}</b></blockquote>{status}",
+        f"{prefix}✈️ <b>SMENA</b> — номера Telegram США\n\n"
+        "Американские номера <b>+1</b>: купил, вошёл — код уже в чате 🔥\n\n"
+        f"{DOT} Аренда <b>{escape(RENTAL_LABEL.lower())}</b>\n"
+        f"{DOT} Код входа приходит <b>прямо сюда</b>\n"
+        f"{DOT} Повторные коды — весь срок аренды\n"
+        f"{DOT} Пополнение криптой: USDT и TON\n\n"
+        f"<blockquote>💰 Баланс: <b>${display(balance)}</b></blockquote>{status}",
         [
             [(buy, "catalog:0", "catalog")],
             [("Профиль", "profile"), ("Кошелёк", "wallet")],
@@ -171,19 +184,20 @@ async def catalog(message, offset=0, country_id=None, edit=False):
         navigation.append(("→", f"catalog:{offset + 10}", "plain"))
     rows += [navigation, [HOME]]
     if not can_sell():
-        description = "Покупки пока недоступны — магазин готовится к запуску."
+        description = "⚡️ Покупки пока недоступны — магазин готовится к запуску."
     elif page:
-        description = "Выберите номер:"
+        description = "⚡️ Выберите вариант:"
     else:
-        description = "Сейчас номеров нет в наличии. Загляните немного позже."
+        description = "⚡️ Сейчас номеров нет в наличии. Загляните немного позже."
     await show(
         message,
-        f"{icon('catalog')} <b>Номера Telegram · США</b>\n\n"
-        f"Виртуальные номера +1, срок аренды — {escape(RENTAL_LABEL.lower())}.\n"
-        f"Код входа придёт в этот чат.\n\n{description}",
+        "🛒 <b>Купить номер · США</b>\n\n"
+        f"{DOT} Виртуальный номер <b>+1</b> под Telegram\n"
+        f"{DOT} Аренда {escape(RENTAL_LABEL.lower())}, продление в пару нажатий\n"
+        f"{DOT} Номер выдаётся сразу, код придёт в этот чат\n\n{description}",
         rows,
         edit,
-        banner=banner("numbers"),
+        banner=banner("buy"),
     )
 
 
@@ -197,21 +211,21 @@ async def product_screen(message, user_id, product_id, edit=False):
     balance = balance_of(user_id)
     rows = []
     if not can_sell():
-        footer = "<i>Покупки временно недоступны.</i>"
+        footer = "⚡️ <i>Покупки временно недоступны.</i>"
     elif balance >= price:
-        footer = "<i>Выданный номер нельзя отменить или вернуть.</i>"
+        footer = "❗️ <i>Выданный номер нельзя отменить или вернуть.</i>"
         rows.append([(f"Купить за ${display(price)}", f"buy:{product_id}:{price}:{secrets.token_hex(12)}")])
     else:
-        footer = f"Не хватает <b>${display(price - balance)}</b> — пополните кошелёк."
+        footer = f"💸 Не хватает <b>${display(price - balance)}</b> — пополните кошелёк."
         rows.append([("Пополнить кошелёк", "wallet", "money")])
     rows.append([("Каталог", "catalog:0", "catalog", ""), HOME])
     await show(
         message,
-        f"{icon('catalog')} <b>{KIND_LABELS[kind]} · США</b>\n\n"
-        "Виртуальный номер +1 для Telegram\n"
-        f"Срок аренды: {escape(RENTAL_LABEL.lower())}\n"
-        "Код входа: приходит в этот чат\n\n"
-        f"<blockquote>Цена: <b>${display(price)}</b>\nВаш баланс: ${display(balance)}</blockquote>\n"
+        f"📱 <b>{KIND_LABELS[kind]} · США</b>\n\n"
+        f"{DOT} Номер <b>+1</b> под Telegram\n"
+        f"{DOT} Аренда: {escape(RENTAL_LABEL.lower())}\n"
+        f"{DOT} Код входа: приходит в этот чат\n\n"
+        f"<blockquote>💎 Цена: <b>${display(price)}</b>\n💰 Баланс: ${display(balance)}</blockquote>\n"
         f"{footer}",
         rows,
         edit,
@@ -225,33 +239,32 @@ def order_screen(order, archived, checked=False, again=False):
     title = "Архивный заказ" if archived else "Номер Telegram · США"
     lines = [f"{status_icon(order.status)} <b>{title}</b>", ""]
     if order.phone:
-        lines.append(f"<code>{escape(format_phone(order.phone))}</code>")
-    lines.append(
-        f"Статус: {status}"
-        + (f" · до {escape(until)}" if until and order.status in ("waiting", "active") else "")
-    )
+        lines.append(f"📱 <code>{escape(format_phone(order.phone))}</code>")
+    lines.append(f"{DOT} Статус: {status}")
+    if until and order.status in ("waiting", "active"):
+        lines.append(f"{DOT} Аренда до: {escape(until)}")
     live = order.status in ("waiting", "active") and not archived
     if order.sms:
-        lines += ["", f"<blockquote>Последний код: <code>{escape(order.sms)}</code></blockquote>"]
+        lines += ["", f"<blockquote>💬 Последний код: <code>{escape(order.sms)}</code></blockquote>"]
     if live and not order.sms:
-        lines += ["", "Код придёт в этот чат автоматически."]
+        lines += ["", "⚡️ Код придёт в этот чат автоматически."]
     elif live and not again:
-        lines += ["", "Новые коды тоже придут сюда автоматически."]
+        lines += ["", "⚡️ Новые коды тоже придут сюда автоматически."]
     if order.status == "refunded":
-        lines += ["", f"${display(order.price)} возвращены на баланс."]
+        lines += ["", f"💸 ${display(order.price)} возвращены на баланс."]
     elif order.status == "review":
-        lines += ["", "Проверяем заказ. Деньги не потеряются — результат придёт в этот чат."]
+        lines += ["", "🔎 Проверяем заказ. Деньги не потеряются — результат придёт в этот чат."]
     elif order.status in ("reserved", "allocating"):
-        lines += ["", "Получаем номер, это занимает несколько секунд."]
+        lines += ["", "⚡️ Получаем номер, это занимает несколько секунд."]
     elif order.status == "expired":
-        lines += ["", "Срок аренды закончился."]
+        lines += ["", "📆 Срок аренды закончился."]
     if again and live:
         lines += [
             "",
             f"{icon('refresh')} <b>Ждём новый код.</b> Нажмите «Отправить код ещё раз» в Telegram — "
             "он придёт в этот чат автоматически.",
         ]
-    lines += ["", f"<i>Заказ {order.id[:8]} · ${display(order.price)}</i>"]
+    lines += ["", f"<i>📝 Заказ {order.id[:8]} · ${display(order.price)}</i>"]
     if checked:
         lines.append(f"<i>Проверено в {datetime.now(timezone.utc):%H:%M:%S} UTC</i>")
     rows = []
@@ -296,9 +309,10 @@ async def orders(message, user_id, offset=0, edit=False):
     if not rows and not offset:
         await show(
             message,
-            f"{icon('orders')} <b>Мои номера</b>\n\nЗдесь появятся купленные номера.",
+            "📁 <b>Мои номера</b>\n\n⚡️ Здесь появятся купленные номера — первый можно взять прямо сейчас.",
             [[("Купить номер", "catalog:0")], [("Профиль", "profile", "user", ""), HOME]],
             edit,
+            banner=banner("numbers"),
         )
         return
     buttons = [
@@ -321,7 +335,9 @@ async def orders(message, user_id, offset=0, edit=False):
         navigation.append(("→", f"orders:{offset + 10}", "plain"))
     await show(
         message,
-        f"{icon('orders')} <b>Мои номера</b>\n\nОткройте номер, чтобы скопировать его, проверить SMS или продлить.",
+        "📁 <b>Мои номера</b>\n\n"
+        f"{DOT} Нажмите на номер, чтобы открыть карточку\n"
+        f"{DOT} Там: скопировать, получить код, продлить",
         buttons + [navigation, [("Профиль", "profile", "user", ""), HOME]],
         edit,
         banner=banner("numbers"),
@@ -349,21 +365,23 @@ async def profile(message, user_from, edit=False):
             )
         )
     invited, earned = referral_stats(user_id)
-    name = f"@{escape(user_from.username)}" if user_from.username else escape(user_from.first_name or "")
+    name = escape(f"@{user_from.username}" if user_from.username else f"@user{user_id}")
     await show(
         message,
-        f"{icon('user')} <b>Профиль</b> · {name}\n\n"
-        f"<blockquote>ID: <code>{user_id}</code>\n"
-        f"Баланс: <b>${display(user.balance if user else 0)}</b>\n"
-        f"Активных номеров: {numbers}\nПотрачено: ${display(spent)}</blockquote>\n"
-        f"{icon('star')} Рефералы: {invited} · заработано <b>${display(earned)}</b>",
+        "🪪 <b>Профиль</b>\n\n"
+        f"{DOT} Аккаунт: <b>{name}</b>\n"
+        f"{DOT} ID: <code>{user_id}</code>\n"
+        f"{DOT} Активных номеров: <b>{numbers}</b>\n"
+        f"{DOT} Потрачено: <b>${display(spent)}</b>\n\n"
+        f"<blockquote>💰 Баланс: <b>${display(user.balance if user else 0)}</b>\n"
+        f"⭐️ Рефералы: <b>{invited}</b> · заработано <b>${display(earned)}</b></blockquote>",
         [
             [("Мои номера", "orders")],
             [("Рефералы", "ref", "star"), ("API для реселлеров", "api", "send")],
             [HOME],
         ],
         edit,
-        banner=banner("profile"),
+        banner=personal_banner("profile", user_id),
     )
 
 
@@ -376,11 +394,13 @@ async def referrals(message, user_id, edit=False):
     percent = settings.referral_percent
     await show(
         message,
-        f"{icon('star')} <b>Реферальная программа</b>\n\n"
-        f"Приглашайте друзей и получайте <b>{percent}%</b> с каждого их пополнения — "
-        "сразу на баланс, навсегда.\n\n"
-        f"Ваша ссылка:\n<code>{escape(link)}</code>\n\n"
-        f"<blockquote>Приглашено: <b>{invited}</b>\nЗаработано: <b>${display(earned)}</b></blockquote>",
+        "⭐️ <b>Реферальная программа</b>\n\n"
+        f"Приглашайте друзей и получайте <b>{percent}%</b> с каждого их пополнения 🔥\n\n"
+        f"{DOT} Бонус приходит на баланс сразу\n"
+        f"{DOT} Без лимитов и навсегда\n"
+        f"{DOT} Тратьте на номера, как обычные деньги\n\n"
+        f"✍️ Ваша ссылка:\n<code>{escape(link)}</code>\n\n"
+        f"<blockquote>🪪 Приглашено: <b>{invited}</b>\n💸 Заработано: <b>${display(earned)}</b></blockquote>",
         [
             [("Скопировать ссылку", link, "copy"), ("Поделиться", share, "send")],
             [("Профиль", "profile", "user", ""), HOME],
@@ -390,36 +410,38 @@ async def referrals(message, user_id, edit=False):
     )
 
 
-API_DOCS = """<b>Авторизация:</b> заголовок <code>Authorization: Bearer КЛЮЧ</code>
-Лимит — 60 запросов в минуту. Оплата — с баланса бота.
+API_DOCS = """🔴 <b>Адрес:</b> <code>{url}</code>
+🔴 <b>Ключ:</b> заголовок <code>Authorization: Bearer КЛЮЧ</code>
+🔴 <b>Лимит:</b> 60 запросов в минуту, оплата с баланса бота
 
-<code>GET  /reseller/v1/balance</code> — баланс
-<code>GET  /reseller/v1/products</code> — товары и цены
-<code>POST /reseller/v1/orders</code> — купить номер
-  {{"product_id": 1, "request_id": "ваш-уникальный-id"}}
-<code>GET  /reseller/v1/orders</code> — история
-<code>GET  /reseller/v1/orders/ID</code> — статус, номер и код
+<b>Методы</b>
+💰 <code>GET  /reseller/v1/balance</code> — баланс
+🛒 <code>GET  /reseller/v1/products</code> — товары и цены
+✅ <code>POST /reseller/v1/orders</code> — купить номер
+<code>{{"product_id": 1, "request_id": "ваш-id"}}</code>
+📁 <code>GET  /reseller/v1/orders</code> — история
+📱 <code>GET  /reseller/v1/orders/ID</code> — статус, номер и код
 
-Повтор <code>request_id</code> не создаёт второй заказ. Код появляется в поле <code>code</code>.
-<b>Адрес:</b> <code>{url}</code>"""
+💡 Повтор <code>request_id</code> не создаёт второй заказ. Код приходит в поле <code>code</code>."""
 
 
 async def api_screen(message, user_id, edit=False, new_key=None):
     info = key_info(user_id)
     if new_key:
         text = (
-            f"{icon('send')} <b>Ваш API-ключ</b>\n\n<code>{escape(new_key)}</code>\n\n"
-            f"{icon('cancel')} Сохраните его сейчас — больше он показан не будет. "
-            "Если ключ утёк, перевыпустите его: старый сразу перестанет работать."
+            f"🔥 <b>Ваш API-ключ готов</b>\n\n<code>{escape(new_key)}</code>\n\n"
+            f"{DOT} Сохраните его сейчас — больше он показан не будет\n"
+            f"{DOT} Если ключ утёк, перевыпустите: старый сразу перестанет работать"
         )
         rows = [[("Скопировать ключ", new_key, "copy")], [("Документация", "apidocs", "payments")]]
     elif info:
         used = paid_time(info.last_used_at) + " UTC" if info.last_used_at else "ещё не использовался"
         text = (
-            f"{icon('send')} <b>API для реселлеров</b>\n\n"
-            f"<blockquote>Ключ: <code>{escape(info.prefix)}…</code>\n"
-            f"Создан: {paid_time(info.created_at)} UTC\nПоследний запрос: {used}</blockquote>\n"
-            "Покупайте номера и получайте коды из своего сервиса или бота. Цены — как в магазине."
+            "📣 <b>API для реселлеров</b>\n\n"
+            f"{DOT} Ключ: <code>{escape(info.prefix)}…</code>\n"
+            f"{DOT} Создан: {paid_time(info.created_at)} UTC\n"
+            f"{DOT} Последний запрос: {used}\n\n"
+            "💡 Покупайте номера и получайте коды из своего сервиса или бота — по ценам магазина."
         )
         rows = [
             [("Документация", "apidocs", "payments")],
@@ -427,9 +449,11 @@ async def api_screen(message, user_id, edit=False, new_key=None):
         ]
     else:
         text = (
-            f"{icon('send')} <b>API для реселлеров</b>\n\n"
-            "Подключите магазин к своему сервису или боту: покупка номеров и получение кодов "
-            "через HTTP API. Списание — с баланса этого аккаунта, цены как в магазине."
+            "📣 <b>API для реселлеров</b>\n\n"
+            "Подключите магазин к своему сервису или боту 🤖\n\n"
+            f"{DOT} Покупка номеров и коды по HTTP\n"
+            f"{DOT} Оплата с баланса этого аккаунта\n"
+            f"{DOT} Цены как в магазине, 60 запросов в минуту"
         )
         rows = [[("Создать ключ", "apikey", "confirm")], [("Документация", "apidocs", "payments")]]
     await show(message, text, rows + [[("Профиль", "profile", "user", ""), HOME]], edit, banner=banner("api"))
@@ -452,7 +476,7 @@ async def payments(message, user_id, offset=0, edit=False):
     if not rows and not offset:
         await show(
             message,
-            f"{icon('payments')} <b>Пополнения</b>\n\nПополнений пока нет.",
+            "📝 <b>Пополнения</b>\n\n⚡️ Пополнений пока нет.",
             [[("Пополнить кошелёк", "wallet")], [HOME]],
             edit,
         )
@@ -486,23 +510,23 @@ async def payment_message(message, payment, edit=False):
     payable = payment.status == "pending" and payment.expires_at > now()
     provider = PROVIDER_LABELS.get(payment.provider, payment.provider)
     lines = [
-        f"{icon('payments')} <b>Счёт {provider}</b>",
+        f"📝 <b>Счёт {provider}</b>",
         "",
-        f"<blockquote>На баланс: <b>${display(payment.amount)}</b>\n"
-        f"Статус: {STATUS_LABELS.get(payment.status, payment.status)}</blockquote>",
+        f"<blockquote>💸 На баланс: <b>${display(payment.amount)}</b>\n"
+        f"{status_icon(payment.status)} Статус: {STATUS_LABELS.get(payment.status, payment.status)}</blockquote>",
     ]
     if payable and payment.url.startswith("https://"):
         rows.append([("Оплатить", payment.url, "confirm")])
     if payment.provider == "ton" and payable:
         lines += [
             "",
-            f"Отправьте ровно <code>{escape(payment.crypto_amount)}</code> TON "
+            f"{DOT} Сумма: ровно <code>{escape(payment.crypto_amount)}</code> TON "
             f"({'TESTNET' if settings.ton_testnet else 'MAINNET'})",
-            f"Адрес: <code>{escape(settings.ton_wallet)}</code>",
-            f"Комментарий (обязательно): <code>{escape(payment.reference)}</code>",
+            f"{DOT} Адрес: <code>{escape(settings.ton_wallet)}</code>",
+            f"{DOT} Комментарий (обязательно): <code>{escape(payment.reference)}</code>",
             "",
-            f'<a href="{escape(payment.url)}">Открыть в TON-кошельке</a>',
-            "<i>Курс зафиксирован на время счёта. Комиссия сети оплачивается отдельно.</i>",
+            f'💰 <a href="{escape(payment.url)}">Открыть в TON-кошельке</a>',
+            "💡 <i>Курс зафиксирован на время счёта. Комиссия сети оплачивается отдельно.</i>",
         ]
         rows.append(
             [
@@ -514,14 +538,14 @@ async def payment_message(message, payment, edit=False):
     elif payment.provider == "ton" and payment.status != "paid":
         lines += [
             "",
-            "Этот счёт сейчас недоступен для оплаты. Если перевод уже отправлен — "
+            "❗️ Этот счёт сейчас недоступен для оплаты. Если перевод уже отправлен — "
             "проверьте статус или напишите в поддержку.",
         ]
     elif payment.provider == "demo":
-        lines += ["", "Демо: подтвердите этот счёт в админке → Пополнения."]
+        lines += ["", "🧪 Тестовый счёт подтверждается в админке."]
     if payment.status == "pending":
         lines.append("")
-        lines.append(f"Оплатить до {datetime.fromtimestamp(payment.expires_at, timezone.utc):%H:%M} UTC")
+        lines.append(f"📆 Оплатить до {datetime.fromtimestamp(payment.expires_at, timezone.utc):%H:%M} UTC")
     if payment.status in ("pending", "expired"):
         rows.append([("Проверить оплату", "checkpay:" + payment.id)])
     rows.append([("Кошелёк", "wallet"), HOME])
@@ -533,12 +557,14 @@ async def wallet(message, user_id, edit=False):
     rows = [[(METHOD_LABELS[name], "deposit:" + name)] for name in methods]
     await show(
         message,
-        f"{icon('wallet')} <b>Кошелёк</b>\n\n"
-        f"<blockquote>Баланс: <b>${display(balance_of(user_id))}</b></blockquote>\n"
-        + ("Выберите способ пополнения:" if rows else "Пополнение временно недоступно."),
+        "💰 <b>Кошелёк</b>\n\n"
+        f"<blockquote>💰 Баланс: <b>${display(balance_of(user_id))}</b></blockquote>\n"
+        f"{DOT} Баланс в долларах, оплата криптой\n"
+        f"{DOT} Зачисление сразу после оплаты\n\n"
+        + ("💸 Выберите способ пополнения:" if rows else "⚡️ Пополнение временно недоступно."),
         rows + [[HOME]],
         edit,
-        banner=banner("wallet"),
+        banner=personal_banner("wallet", user_id),
     )
 
 
@@ -616,7 +642,7 @@ async def callback(query: CallbackQuery, state: FSMContext):
             order = reserve_order(user_id, int(product_id), f"{user_id}:{token}", int(price))
             await show(
                 message,
-                f"{icon('wait')} <b>Получаем номер…</b>\n\nЭто занимает несколько секунд.",
+                "⚡️ <b>Получаем номер…</b>\n\n🔴 Это занимает несколько секунд",
                 [],
                 edit=True,
             )
@@ -643,15 +669,15 @@ async def callback(query: CallbackQuery, state: FSMContext):
             )
             if balance >= price:
                 rows = [[(f"Продлить за ${display(price)}", "renewbuy:" + token)]]
-                footer = "<i>Оплата спишется с баланса сразу.</i>"
+                footer = "💡 <i>Оплата спишется с баланса сразу.</i>"
             else:
                 rows = [[("Пополнить кошелёк", "wallet", "money")]]
-                footer = f"Не хватает <b>${display(price - balance)}</b> — пополните кошелёк."
+                footer = f"💸 Не хватает <b>${display(price - balance)}</b> — пополните кошелёк."
             await show(
                 message,
-                f"{icon('orders')} <b>Продление номера</b>\n\n"
-                f"<code>{escape(format_phone(phone))}</code>\nСрок: +1 месяц\n\n"
-                f"<blockquote>Цена: <b>${display(price)}</b>\nВаш баланс: ${display(balance)}</blockquote>\n{footer}",
+                "📆 <b>Продление номера</b>\n\n"
+                f"📱 <code>{escape(format_phone(phone))}</code>\n{DOT} Срок: +1 месяц\n\n"
+                f"<blockquote>💎 Цена: <b>${display(price)}</b>\n💰 Баланс: ${display(balance)}</blockquote>\n{footer}",
                 rows + [[("Назад к номеру", "order:" + argument, "phone", "")]],
                 edit=True,
             )
@@ -662,7 +688,7 @@ async def callback(query: CallbackQuery, state: FSMContext):
             order = reserve_order(
                 user_id, info["product_id"], f"{user_id}:renew:{argument}", info["price"], info["parent_id"]
             )
-            await show(message, f"{icon('wait')} <b>Продлеваем номер…</b>", [], edit=True)
+            await show(message, "⚡️ <b>Продлеваем номер…</b>", [], edit=True)
             await allocate_order(order.id)
             with Session() as db:
                 renewed = db.get(Order, order.id)
@@ -692,7 +718,7 @@ async def callback(query: CallbackQuery, state: FSMContext):
         elif action == "apidocs":
             await show(
                 message,
-                f"{icon('payments')} <b>Документация API</b>\n\n" + API_DOCS.format(url=escape(public_url())),
+                "📝 <b>Документация API</b>\n\n" + API_DOCS.format(url=escape(public_url())),
                 [[("API", "api", "send"), HOME]],
                 edit=True,
             )
@@ -714,15 +740,16 @@ async def callback(query: CallbackQuery, state: FSMContext):
             await state.update_data(provider=argument)
             await show(
                 message,
-                f"{icon('wallet')} <b>Пополнение · {PROVIDER_LABELS.get(argument, argument)}</b>\n\n"
-                "Выберите сумму или отправьте свою сообщением — от $1 до $10000, например <code>7.50</code>.",
+                f"💸 <b>Пополнение · {PROVIDER_LABELS.get(argument, argument)}</b>\n\n"
+                f"{DOT} Выберите сумму кнопкой ниже\n"
+                f"{DOT} Или отправьте свою сообщением — от $1 до $10000, например <code>7.50</code>",
                 [
                     [(f"${value}", f"amount:{argument}:{value}", "money", "") for value in QUICK_AMOUNTS[:3]],
                     [(f"${value}", f"amount:{argument}:{value}", "money", "") for value in QUICK_AMOUNTS[3:]],
                     [("Кошелёк", "wallet")],
                 ],
                 edit=True,
-                banner=banner("wallet"),
+                banner=personal_banner("wallet", user_id),
             )
         elif action == "amount":
             provider, value = argument.split(":")

@@ -12,9 +12,11 @@ def test_colored_buttons_have_native_telegram_styles():
     markup = bot_ui.keyboard(
         [[("Buy", "catalog:0"), ("Pay", "buy:1:1:x"), ("Top up", "deposit:demo"), ("Menu", "home")]]
     )
-    assert [b.style for b in markup.inline_keyboard[0]] == ["primary", "success", "success", None]
-    plain = bot_ui.keyboard([[("Back", "catalog:0", "catalog", "")]])
-    assert plain.inline_keyboard[0][0].style is None
+    # Every button is coloured: green to buy/pay, red for destructive, blue for the rest.
+    assert [b.style for b in markup.inline_keyboard[0]] == ["success", "success", "success", "primary"]
+    assert bot_ui.keyboard([[("Cancel", "cancel:1")]]).inline_keyboard[0][0].style == "danger"
+    assert bot_ui.keyboard([[("Back", "catalog:0", "catalog", "")]]).inline_keyboard[0][0].style == "success"
+    assert bot_ui.keyboard([[("Copy", "+1", "copy")]]).inline_keyboard[0][0].style == "primary"
 
 
 def test_copy_buttons_and_phone_formatting():
@@ -34,7 +36,7 @@ async def test_icons_are_matched_by_emoji_ignoring_variation_selector(monkeypatc
         SimpleNamespace(custom_emoji_id="3", emoji="🏠"),
     ]
     await bot_ui.load_icons(SimpleNamespace(get_forum_topic_icon_stickers=AsyncMock(return_value=stickers)))
-    assert bot_ui.ICONS == {"brand": "1", "catalog": "2", "home": "3"}
+    assert bot_ui.ICONS == {"brand": "1", "catalog": "2", "home": "3", **bot_ui.FIXED_ICONS}
     markup = bot_ui.keyboard([[("Buy", "catalog:0"), ("Menu", "home")]])
     assert [b.icon_custom_emoji_id for b in markup.inline_keyboard[0]] == ["2", "3"]
 
@@ -78,4 +80,9 @@ async def test_rejected_premium_markup_falls_back_without_losing_button_action(m
     assert "<tg-emoji" not in retry.text
     assert retry.reply_markup.inline_keyboard[0][0].callback_data == "catalog:0"
     assert retry.reply_markup.inline_keyboard[0][0].icon_custom_emoji_id is None
-    assert retry.reply_markup.inline_keyboard[0][0].style == "primary"
+    assert retry.reply_markup.inline_keyboard[0][0].style == "success"
+
+
+def test_owner_bullet_emoji_becomes_premium(monkeypatch):
+    monkeypatch.setattr(bot_ui, "ICONS", dict(bot_ui.FIXED_ICONS))
+    assert bot_ui.premium("🔴 пункт") == '<tg-emoji emoji-id="5375308238466074564">🔴</tg-emoji> пункт'

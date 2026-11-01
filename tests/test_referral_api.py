@@ -108,3 +108,20 @@ def test_short_request_ids_are_accepted(api, database):
     assert first.status_code == 200
     again = api.post("/reseller/v1/orders", json={"product_id": 1, "request_id": "42"}, headers=headers)
     assert again.json()["id"] == first.json()["id"]
+
+
+def test_personal_banner_shows_live_data_and_is_signed(api, database):
+    from app import banners
+
+    with database.begin() as db:
+        db.get(User, 123).balance = 2_340_000
+    data = banners.user_data(123)
+    assert data["balance"] == "2.34" and data["username"] == "tester"
+    assert banners.handle("", 55) == "@user55"
+    good = f"/banner/profile/123/{banners.signature(123)}.png"
+    response = api.get(good)
+    assert response.status_code == 200 and response.headers["content-type"] == "image/png"
+    assert response.content[:8] == b"\x89PNG\r\n\x1a\n"
+    assert api.get("/banner/profile/123/" + "0" * 20 + ".png").status_code == 404
+    assert api.get(f"/banner/admin/123/{banners.signature(123)}.png").status_code == 404
+    assert api.get(f"/banner/wallet/123/{banners.signature(123)}.png").status_code == 200

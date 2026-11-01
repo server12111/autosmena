@@ -52,7 +52,13 @@ FALLBACK = {
     "test": "🧪",
     "star": "⭐️",
     "send": "📣",
+    "fire": "🔥",
+    "idea": "💡",
+    "trophy": "🏆",
+    "bullet": "🔴",
 }
+# Custom emoji chosen by the owner; they are used even if the forum icon set is unavailable.
+FIXED_ICONS = {"bullet": "5375308238466074564"}
 STATUS_ROLES = {
     "reserved": "wait",
     "allocating": "wait",
@@ -90,8 +96,12 @@ ROLES_BY_ACTION = {
     "apikey": "confirm",
     "home": "home",
     "admin": "admin",
+    "cancel": "cancel",
+    "cancelask": "cancel",
+    "apikeyask": "cancel",
 }
-STYLES = {"cancel": "danger", "confirm": "success", "money": "success", "catalog": "primary"}
+# Every button is coloured: red for destructive, green for paying/confirming, blue otherwise.
+STYLES = {"cancel": "danger", "confirm": "success", "money": "success", "catalog": "success"}
 
 
 def _bare(emoji):
@@ -107,8 +117,8 @@ def role_for(value):
 
 
 def button(label, value, role=None, style=None):
-    """role=None picks a role from the callback; role="plain" draws a button without an icon;
-    style="" keeps the icon but drops the role colour."""
+    """role=None picks a role from the callback; role="plain" draws a button without an icon.
+    style overrides the colour; empty means the default blue."""
     if role is None:
         role = role_for(value)
     if role == "plain":
@@ -123,7 +133,7 @@ def button(label, value, role=None, style=None):
         options["icon_custom_emoji_id"] = ICONS[role]
     elif role in FALLBACK and not any(label.startswith(icon) for icon in FALLBACK.values()):
         label = FALLBACK[role] + " " + label
-    style = STYLES.get(role) if style is None else (style or None)
+    style = style or STYLES.get(role, "primary")
     return InlineKeyboardButton(text=label, style=style, **options)
 
 
@@ -182,6 +192,7 @@ async def show(message, text, rows, edit=False, banner=None):
 
 
 async def load_icons(bot):
+    ICONS.update(FIXED_ICONS)
     try:
         by_emoji = {}
         for sticker in await bot.get_forum_topic_icon_stickers():
