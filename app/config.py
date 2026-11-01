@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Literal
 
 from pydantic import model_validator
@@ -21,6 +22,8 @@ class Settings(BaseSettings):
     admin_access_mode: Literal["https", "ssh_tunnel"] = "https"
     bot_token: str = ""
     support_url: str = "https://t.me/your_support"
+    # Telegram IDs with access to the in-bot admin panel, comma separated.
+    admin_ids: str = "7145919720"
     apicc_api_key: str = ""
     apicc_url: str = "https://api.cc"
     apicc_usd_rate: str = ""
@@ -42,6 +45,10 @@ class Settings(BaseSettings):
         elif self.demo_mode is None:
             self.demo_mode = False
         return self
+
+    @property
+    def admin_id_set(self):
+        return {int(value) for value in re.findall(r"\d+", self.admin_ids)}
 
     @property
     def resolved_database_url(self):

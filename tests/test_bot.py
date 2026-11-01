@@ -151,7 +151,9 @@ async def test_purchase_flow_edits_one_message_until_number_card(database):
     event = query(buy)
     await bot.callback(event, FakeState())
     text = event.message.edit_text.call_args.args[0]
-    assert "<code>+1 555" in text and "Добавить аккаунт" in text
+    assert "<code>+1 555" in text and "Код придёт в этот чат" in text
+    assert "Добавить аккаунт" not in text
+    assert not any(b and b.startswith("cancel") for b in buttons(event.message.edit_text))
     assert any(b and b.startswith("+1555") for b in buttons(event.message.edit_text))
     assert not event.message.answer.await_count
     with database() as db:
@@ -194,3 +196,23 @@ async def test_free_text_shows_menu(database):
     message = SimpleNamespace(answer=AsyncMock(), from_user=SimpleNamespace(id=123, username="tester"))
     await bot.anything_else(message, FakeState())
     assert "SMENA" in message.answer.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_demo_code_is_digits_only():
+    from app.supplier import DemoSupplier
+
+    state = await DemoSupplier().status(SimpleNamespace(created_at=0))
+    assert state.sms == "123456"
+
+
+@pytest.mark.asyncio
+async def test_menu_has_no_help_or_payment_history_and_admin_only_for_owner(database, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "admin_ids", "999")
+    message = SimpleNamespace(answer=AsyncMock())
+    await bot.send_menu(message, 123)
+    assert not {"help", "payments", "adm:home"} & set(buttons(message.answer))
+    await bot.send_menu(message, 999)
+    assert "adm:home" in buttons(message.answer)

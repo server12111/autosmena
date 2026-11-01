@@ -9,26 +9,27 @@ from html import escape
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ChatType
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import SimpleEventIsolation
-from aiogram.types import CallbackQuery, LinkPreviewOptions, Message
+from aiogram.types import BotCommand, BotCommandScopeChat, CallbackQuery, Message
 from sqlalchemy import or_, select
 
-from app import webhooks
+from app import bot_admin, webhooks
+from app.bot_admin import is_admin
 from app.bot_ui import (
     PROVIDER_LABELS,
-    STATUS_ICONS,
     STATUS_LABELS,
+    STATUS_ROLES,
     PremiumFallback,
     copy_phone,
     format_date,
     format_phone,
     icon,
-    keyboard,
     load_icons,
+    show,
+    status_icon,
 )
 from app.catalog_policy import allowed_codes, permitted_code
 from app.config import settings
@@ -43,7 +44,6 @@ router = Router()
 router.message.filter(F.chat.type == ChatType.PRIVATE)
 router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
 last_action = defaultdict(float)
-NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 QUICK_AMOUNTS = (1, 3, 5, 10, 25, 50)
 METHOD_LABELS = {
     "cryptopay": "Crypto Bot · USDT / TON",
@@ -51,26 +51,11 @@ METHOD_LABELS = {
     "ton": "TON · перевод на кошелёк",
     "demo": "Тестовое пополнение",
 }
-HOME = ("Меню", "home", "plain")
+HOME = ("Меню", "home")
 
 
 class Deposit(StatesGroup):
     amount = State()
-
-
-async def show(message, text, rows, edit=False):
-    """Navigation edits the same message, so the chat does not fill up with old screens."""
-    markup = keyboard(rows)
-    if edit and hasattr(message, "edit_text"):
-        try:
-            await message.edit_text(
-                text, parse_mode="HTML", reply_markup=markup, link_preview_options=NO_PREVIEW
-            )
-            return
-        except TelegramBadRequest as error:
-            if "not modified" in str(error).lower():
-                return
-    await message.answer(text, parse_mode="HTML", reply_markup=markup, link_preview_options=NO_PREVIEW)
 
 
 def balance_of(user_id):
@@ -122,26 +107,10 @@ async def send_menu(message, user_id, edit=False):
         f"<blockquote>Баланс: <b>${display(balance)}</b></blockquote>{status}",
         [
             [(buy, "catalog:0", "catalog")],
-            [("Мои номера", "orders", "orders"), ("Кошелёк", "wallet", "wallet")],
-            [("Пополнения", "payments", "payments"), ("Как это работает", "help", "plain")],
+            [("Мои номера", "orders"), ("Кошелёк", "wallet")],
             support_row(),
+            [("Админка", "adm:home", "admin")] if is_admin(user_id) else [],
         ],
-        edit,
-    )
-
-
-async def help_screen(message, edit=False):
-    await show(
-        message,
-        f"{icon('brand')} <b>Как это работает</b>\n\n"
-        "1. Пополните <b>Кошелёк</b> — Crypto Bot, xRocket или TON.\n"
-        "2. Нажмите <b>Купить номер</b> и подтвердите покупку.\n"
-        "3. В Telegram: Настройки → <b>Добавить аккаунт</b> → введите номер.\n"
-        "4. Код входа придёт в этот чат автоматически, обычно за 1–2 минуты.\n\n"
-        "Номер остаётся вашим весь срок аренды: повторные коды тоже придут сюда. "
-        "Срок можно продлить в карточке номера.\n\n"
-        "<i>Выданный номер нельзя отменить или вернуть.</i>",
-        [[("Купить номер", "catalog:0", "catalog")], [HOME]],
         edit,
     )
 
@@ -203,8 +172,8 @@ async def product_screen(message, user_id, product_id, edit=False):
         rows.append([(f"Купить за ${display(price)}", f"buy:{product_id}:{price}:{secrets.token_hex(12)}")])
     else:
         footer = f"Не хватает <b>${display(price - balance)}</b> — пополните кошелёк."
-        rows.append([("Пополнить кошелёк", "wallet", "wallet")])
-    rows.append([("← Каталог", "catalog:0", "plain"), HOME])
+        rows.append([("Пополнить кошелёк", "wallet", "money")])
+    rows.append([("Каталог", "catalog:0", "catalog", ""), HOME])
     await show(
         message,
         f"{icon('catalog')} <b>{KIND_LABELS[kind]} · США</b>\n\n"
@@ -223,7 +192,7 @@ def order_screen(order, archived, checked=False):
     status = STATUS_LABELS.get(order.status, order.status)
     until = format_date(payload.get("end_time"))
     title = "Архивный заказ" if archived else "Номер Telegram · США"
-    lines = [f"{STATUS_ICONS.get(order.status, '•')} <b>{title}</b>", ""]
+    lines = [f"{status_icon(order.status)} <b>{title}</b>", ""]
     if order.phone:
         lines.append(f"<code>{escape(format_phone(order.phone))}</code>")
     lines.append(
@@ -234,15 +203,7 @@ def order_screen(order, archived, checked=False):
     if order.sms:
         lines += ["", f"<blockquote>Последний код: <code>{escape(order.sms)}</code></blockquote>"]
     if live and not order.sms:
-        lines += [
-            "",
-            "<b>Как войти</b>",
-            "1. Telegram → Настройки → «Добавить аккаунт»",
-            "2. Введите номер и запросите код",
-            "3. Код придёт в этот чат сам, обычно за 1–2 минуты",
-            "",
-            "<i>Если Telegram предлагает другой способ — выберите SMS.</i>",
-        ]
+        lines += ["", "Код придёт в этот чат автоматически."]
     elif live:
         lines += ["", "Новые коды тоже придут сюда автоматически."]
     if order.status == "refunded":
@@ -265,11 +226,9 @@ def order_screen(order, archived, checked=False):
         rows.append([("Проверить SMS", "sms:" + order.id)])
     if order.status in ("reserved", "allocating"):
         rows.append([("Обновить", "order:" + order.id, "refresh")])
-    if order.status == "waiting" and getattr(supplier, "can_cancel", False):
-        rows.append([("Отменить заказ", "cancelask:" + order.id)])
     if order.status in ("active", "expired") and not order.parent_id and not archived:
         rows.append([("Продлить номер", "renew:" + order.id)])
-    rows.append([("← Мои номера", "orders", "plain"), HOME])
+    rows.append([("Мои номера", "orders"), HOME])
     return "\n".join(lines), rows
 
 
@@ -297,18 +256,19 @@ async def orders(message, user_id, offset=0, edit=False):
         await show(
             message,
             f"{icon('orders')} <b>Мои номера</b>\n\nЗдесь появятся купленные номера.",
-            [[("Купить номер", "catalog:0", "catalog")], [HOME]],
+            [[("Купить номер", "catalog:0")], [HOME]],
             edit,
         )
         return
     buttons = [
         [
             (
-                f"{STATUS_ICONS.get(o.status, '•')} {'Продление ' if o.parent_id else ''}"
+                f"{'Продление ' if o.parent_id else ''}"
                 f"{format_phone(o.phone) if o.phone else 'Заказ ' + o.id[:8]}"
                 f" · {STATUS_LABELS.get(o.status, o.status).lower()}",
                 "order:" + o.id,
-                "plain",
+                STATUS_ROLES.get(o.status, "phone"),
+                "",
             )
         ]
         for o in rows[:10]
@@ -344,12 +304,12 @@ async def payments(message, user_id, offset=0, edit=False):
         await show(
             message,
             f"{icon('payments')} <b>Пополнения</b>\n\nПополнений пока нет.",
-            [[("Пополнить кошелёк", "wallet", "wallet")], [HOME]],
+            [[("Пополнить кошелёк", "wallet")], [HOME]],
             edit,
         )
         return
     lines = [
-        f"{STATUS_ICONS.get(p.status, '•')} <b>${display(p.amount)}</b> · "
+        f"{status_icon(p.status)} <b>${display(p.amount)}</b> · "
         f"{PROVIDER_LABELS.get(p.provider, p.provider)} · {paid_time(p.created_at)} · "
         f"{STATUS_LABELS.get(p.status, p.status).lower()}"
         for p in rows[:10]
@@ -367,7 +327,7 @@ async def payments(message, user_id, offset=0, edit=False):
     await show(
         message,
         f"{icon('payments')} <b>Пополнения</b>\n\n" + "\n".join(lines) + "\n\n<i>Время UTC</i>",
-        buttons + [navigation, [("Кошелёк", "wallet", "wallet"), HOME]],
+        buttons + [navigation, [("Кошелёк", "wallet"), HOME]],
         edit,
     )
 
@@ -415,7 +375,7 @@ async def payment_message(message, payment, edit=False):
         lines.append(f"Оплатить до {datetime.fromtimestamp(payment.expires_at, timezone.utc):%H:%M} UTC")
     if payment.status in ("pending", "expired"):
         rows.append([("Проверить оплату", "checkpay:" + payment.id)])
-    rows.append([("← Пополнения", "payments", "plain"), HOME])
+    rows.append([("Кошелёк", "wallet"), HOME])
     await show(message, "\n".join(lines), rows, edit)
 
 
@@ -427,7 +387,7 @@ async def wallet(message, user_id, edit=False):
         f"{icon('wallet')} <b>Кошелёк</b>\n\n"
         f"<blockquote>Баланс: <b>${display(balance_of(user_id))}</b></blockquote>\n"
         + ("Выберите способ пополнения:" if rows else "Пополнение временно недоступно."),
-        rows + [[("Пополнения", "payments", "payments"), HOME]],
+        rows + [[HOME]],
         edit,
     )
 
@@ -461,12 +421,6 @@ async def wallet_command(message: Message, state: FSMContext):
     await wallet(message, message.from_user.id)
 
 
-@router.message(Command("help"))
-async def help_command(message: Message, state: FSMContext):
-    await state.clear()
-    await help_screen(message)
-
-
 @router.message(Command("cancel"))
 async def cancel_command(message: Message, state: FSMContext):
     await state.clear()
@@ -496,8 +450,6 @@ async def callback(query: CallbackQuery, state: FSMContext):
         if action == "home":
             await state.clear()
             await send_menu(message, user_id, edit=True)
-        elif action == "help":
-            await help_screen(message, edit=True)
         elif action == "catalog":
             await catalog(message, int(argument.split(":")[0] or 0), edit=True)
         elif action == "product":
@@ -505,7 +457,12 @@ async def callback(query: CallbackQuery, state: FSMContext):
         elif action == "buy":
             product_id, price, token = argument.split(":")
             order = reserve_order(user_id, int(product_id), f"{user_id}:{token}", int(price))
-            await show(message, "⏳ <b>Получаем номер…</b>\n\nЭто занимает несколько секунд.", [], edit=True)
+            await show(
+                message,
+                f"{icon('wait')} <b>Получаем номер…</b>\n\nЭто занимает несколько секунд.",
+                [],
+                edit=True,
+            )
             await allocate_order(order.id)
             mark_notice_sent("allocated:" + order.id)
             await order_card(message, user_id, order.id, edit=True)
@@ -531,14 +488,14 @@ async def callback(query: CallbackQuery, state: FSMContext):
                 rows = [[(f"Продлить за ${display(price)}", "renewbuy:" + token)]]
                 footer = "<i>Оплата спишется с баланса сразу.</i>"
             else:
-                rows = [[("Пополнить кошелёк", "wallet", "wallet")]]
+                rows = [[("Пополнить кошелёк", "wallet", "money")]]
                 footer = f"Не хватает <b>${display(price - balance)}</b> — пополните кошелёк."
             await show(
                 message,
                 f"{icon('orders')} <b>Продление номера</b>\n\n"
                 f"<code>{escape(format_phone(phone))}</code>\nСрок: +1 месяц\n\n"
                 f"<blockquote>Цена: <b>${display(price)}</b>\nВаш баланс: ${display(balance)}</blockquote>\n{footer}",
-                rows + [[("← Назад", "order:" + argument, "plain")]],
+                rows + [[("Назад к номеру", "order:" + argument, "phone", "")]],
                 edit=True,
             )
         elif action == "renewbuy":
@@ -548,7 +505,7 @@ async def callback(query: CallbackQuery, state: FSMContext):
             order = reserve_order(
                 user_id, info["product_id"], f"{user_id}:renew:{argument}", info["price"], info["parent_id"]
             )
-            await show(message, "⏳ <b>Продлеваем номер…</b>", [], edit=True)
+            await show(message, f"{icon('wait')} <b>Продлеваем номер…</b>", [], edit=True)
             await allocate_order(order.id)
             with Session() as db:
                 renewed = db.get(Order, order.id)
@@ -566,16 +523,6 @@ async def callback(query: CallbackQuery, state: FSMContext):
         elif action == "sms":
             await refresh_order(argument, user_id)
             await order_card(message, user_id, argument, edit=True, checked=True)
-        elif action == "cancelask":
-            await show(
-                message,
-                "Отменить заказ? Возврат зависит от подтверждения поставщика.",
-                [[("Да, отменить", "cancel:" + argument)], [("← Назад", "order:" + argument, "plain")]],
-                edit=True,
-            )
-        elif action == "cancel":
-            await refresh_order(argument, user_id, cancel=True)
-            await order_card(message, user_id, argument, edit=True)
         elif action == "wallet":
             await wallet(message, user_id, edit=True)
         elif action == "deposit":
@@ -588,9 +535,9 @@ async def callback(query: CallbackQuery, state: FSMContext):
                 f"{icon('wallet')} <b>Пополнение · {PROVIDER_LABELS.get(argument, argument)}</b>\n\n"
                 "Выберите сумму или отправьте свою сообщением — от $1 до $10000, например <code>7.50</code>.",
                 [
-                    [(f"${value}", f"amount:{argument}:{value}", "plain") for value in QUICK_AMOUNTS[:3]],
-                    [(f"${value}", f"amount:{argument}:{value}", "plain") for value in QUICK_AMOUNTS[3:]],
-                    [("← Кошелёк", "wallet", "plain")],
+                    [(f"${value}", f"amount:{argument}:{value}", "money", "") for value in QUICK_AMOUNTS[:3]],
+                    [(f"${value}", f"amount:{argument}:{value}", "money", "") for value in QUICK_AMOUNTS[3:]],
+                    [("Кошелёк", "wallet")],
                 ],
                 edit=True,
             )
@@ -635,12 +582,12 @@ def payment_of(user_id, payment_id):
 async def error_screen(message, text):
     rows = []
     if "Недостаточно средств" in text:
-        rows.append([("Пополнить кошелёк", "wallet", "wallet")])
+        rows.append([("Пополнить кошелёк", "wallet", "money")])
     if "активный счёт" in text:
-        rows.append([("Открыть пополнения", "payments", "payments")])
+        rows.append([("Открыть счета", "payments")])
     rows.append([HOME])
     # Errors are a new message: the screen the user acted on stays visible above.
-    await show(message, "⚠️ " + escape(text), rows)
+    await show(message, f"{icon('cancel')} " + escape(text), rows)
 
 
 @router.message(Deposit.amount)
@@ -656,8 +603,8 @@ async def deposit_amount(message: Message, state: FSMContext):
         )
         await payment_message(message, payment)
     except ValueError as exc:
-        await message.answer(
-            "⚠️ " + escape(str(exc)) + "\nОтправьте сумму ещё раз или /cancel.", parse_mode="HTML"
+        await show(
+            message, f"{icon('cancel')} " + escape(str(exc)) + "\nОтправьте сумму ещё раз или /cancel.", []
         )
 
 
@@ -712,17 +659,23 @@ async def run():
     bot, dispatcher = Bot(settings.bot_token), Dispatcher(events_isolation=SimpleEventIsolation())
     bot.session.middleware(PremiumFallback())
     await load_icons(bot)
+    dispatcher.include_router(bot_admin.router)
     dispatcher.include_router(router)
-    await bot.set_my_commands(
-        [
-            {"command": "start", "description": "Главное меню"},
-            {"command": "catalog", "description": "Купить номер Telegram США"},
-            {"command": "orders", "description": "Мои номера"},
-            {"command": "wallet", "description": "Кошелёк и пополнение"},
-            {"command": "payments", "description": "История пополнений"},
-            {"command": "help", "description": "Как это работает"},
-        ]
-    )
+    commands = [
+        BotCommand(command="start", description="Главное меню"),
+        BotCommand(command="catalog", description="Купить номер Telegram США"),
+        BotCommand(command="orders", description="Мои номера"),
+        BotCommand(command="wallet", description="Кошелёк"),
+    ]
+    await bot.set_my_commands(commands)
+    for admin_id in settings.admin_id_set:
+        try:
+            await bot.set_my_commands(
+                commands + [BotCommand(command="admin", description="Админка")],
+                scope=BotCommandScopeChat(chat_id=admin_id),
+            )
+        except Exception:
+            logging.getLogger("smena.bot").warning("Admin commands not set: chat has not started the bot")
 
     async def consume_webhooks():
         while True:

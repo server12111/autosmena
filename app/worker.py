@@ -7,7 +7,7 @@ from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy import select
 
 from app import webhooks
-from app.bot_ui import keyboard
+from app.bot_ui import PremiumFallback, keyboard, load_icons, premium
 from app.config import settings
 from app.db import Session
 from app.models import Notice, Order, Payment, now
@@ -72,7 +72,7 @@ def notice_buttons(event, text):
         return rows + [[("Открыть номер", "card:" + order_id)]]
     if kind in ("allocated", "review-attached", "review-renewed", "sms-count"):
         return [[("Открыть номер", "card:" + order_id)]]
-    if kind == "payment":
+    if kind in ("payment", "admin"):
         return [[("Купить номер", "catalog:0", "catalog")]]
     if kind == "refund":
         return [[("Мои номера", "orders", "orders")]]
@@ -83,7 +83,7 @@ async def deliver(bot, notice):
     rows = notice_buttons(notice.event, notice.text)
     markup = keyboard(rows) if rows else None
     try:
-        await bot.send_message(notice.user_id, notice.text, parse_mode="HTML", reply_markup=markup)
+        await bot.send_message(notice.user_id, premium(notice.text), parse_mode="HTML", reply_markup=markup)
     except TelegramBadRequest as error:
         if "parse" not in str(error).lower() and "entit" not in str(error).lower():
             raise
@@ -96,6 +96,9 @@ async def run():
     from aiogram import Bot
 
     bot = Bot(settings.bot_token) if settings.bot_token else None
+    if bot:
+        bot.session.middleware(PremiumFallback())
+        await load_icons(bot)
 
     async def periodic():
         while True:

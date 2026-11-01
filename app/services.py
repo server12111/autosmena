@@ -119,7 +119,7 @@ def refund_order(db, order, reason):
         Notice(
             user_id=order.user_id,
             event="refund:" + order.id,
-            text=f"↩️ Заказ {order.id[:8]} отменён. <b>${display(order.price)}</b> возвращены на баланс.",
+            text=f"💸 Заказ {order.id[:8]} отменён. <b>${display(order.price)}</b> возвращены на баланс.",
         )
     )
 
@@ -175,7 +175,7 @@ async def allocate_order(order_id):
                     user_id=order.user_id,
                     event="allocated:" + order.id,
                     text=(
-                        f"🟢 <b>Номер {'продлён' if parent else 'готов'}</b>\n\n"
+                        f"✅ <b>Номер {'продлён' if parent else 'готов'}</b>\n\n"
                         f"<code>{escape(format_phone(order.phone))}</code>\n"
                         + ("" if parent else "Запросите код в Telegram — он придёт в этот чат.")
                     ),

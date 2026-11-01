@@ -49,7 +49,7 @@ class DemoSupplier:
     async def status(self, order):
         from app.models import now
 
-        return State("completed", "DEMO: 123456") if now() - order.created_at >= 45 else State("waiting")
+        return State("completed", "123456") if now() - order.created_at >= 45 else State("waiting")
 
     async def cancel(self, order):
         state = await self.status(order)

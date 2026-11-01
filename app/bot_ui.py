@@ -5,7 +5,7 @@ import re
 
 from aiogram.client.session.middlewares.base import BaseRequestMiddleware
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
 
 ICONS = {}
 STATUS_LABELS = {
@@ -27,71 +27,82 @@ PROVIDER_LABELS = {
     "ton": "TON",
     "demo": "Тестовое пополнение",
 }
+# Every role maps to an emoji present in Telegram's forum-topic icon set, so every button
+# and message icon can be upgraded to its premium version.
 FALLBACK = {
     "brand": "✈️",
-    "catalog": "📱",
-    "wallet": "💳",
-    "orders": "📂",
-    "payments": "🧾",
+    "catalog": "🛒",
+    "phone": "📱",
+    "wallet": "💰",
+    "orders": "📁",
+    "payments": "📝",
     "confirm": "✅",
-    "cancel": "✖️",
-    "copy": "📋",
-    "refresh": "🔄",
+    "cancel": "❗️",
+    "copy": "✍️",
+    "refresh": "🔎",
     "support": "💬",
+    "home": "🏠",
+    "admin": "👑",
+    "money": "💸",
+    "stats": "📈",
+    "user": "🪪",
+    "price": "💎",
+    "wait": "⚡️",
+    "date": "📆",
+    "test": "🧪",
+    "star": "⭐️",
+    "send": "📣",
 }
-STATUS_ICONS = {
-    "reserved": "⏳",
-    "allocating": "⏳",
-    "waiting": "🟢",
-    "active": "🟢",
-    "expired": "⚪️",
-    "completed": "✅",
-    "refunded": "↩️",
-    "review": "🟡",
-    "creating": "⏳",
-    "pending": "🟡",
-    "paid": "✅",
+STATUS_ROLES = {
+    "reserved": "wait",
+    "allocating": "wait",
+    "creating": "wait",
+    "pending": "wait",
+    "waiting": "confirm",
+    "active": "confirm",
+    "completed": "confirm",
+    "paid": "confirm",
+    "expired": "date",
+    "refunded": "money",
+    "review": "cancel",
 }
-# Telegram forum-topic stickers are the only custom emoji a bot can rely on. Only exact
-# matches are used: a random icon on a button looks broken.
-ICON_CHOICES = {
-    "brand": ["✈️", "✈", "⭐️", "⭐"],
-    "catalog": ["📱", "📲"],
-    "wallet": ["💳", "💰", "💵"],
-    "orders": ["📂", "📁", "🗂"],
-    "payments": ["🧾", "📝"],
-    "confirm": ["✅", "✔️"],
-    "cancel": ["❌", "✖️"],
-    "copy": ["📋"],
-    "refresh": ["🔄", "🔁"],
-    "support": ["💬", "🗨"],
+ROLES_BY_ACTION = {
+    "buy": "confirm",
+    "renewbuy": "confirm",
+    "product": "phone",
+    "catalog": "catalog",
+    "deposit": "money",
+    "amount": "money",
+    "wallet": "wallet",
+    "order": "phone",
+    "card": "phone",
+    "orders": "orders",
+    "renew": "date",
+    "checkpay": "refresh",
+    "pay": "payments",
+    "payments": "payments",
+    "sms": "refresh",
+    "home": "home",
+    "admin": "admin",
 }
+STYLES = {"cancel": "danger", "confirm": "success", "money": "success", "catalog": "primary"}
+
+
+def _bare(emoji):
+    return emoji.replace("\ufe0f", "")
+
+
+def status_icon(status):
+    return FALLBACK[STATUS_ROLES.get(status, "star")]
 
 
 def role_for(value):
-    action = value.split(":", 1)[0]
-    if action in ("buy", "renewbuy", "amount"):
-        return "confirm"
-    if action in ("cancel", "cancelask"):
-        return "cancel"
-    if action in ("product",):
-        return "catalog"
-    if action in ("deposit",):
-        return "wallet"
-    if action == "order":
-        return "orders"
-    if action in ("checkpay", "pay"):
-        return "payments"
-    if action == "sms":
-        return "refresh"
-    return None
+    return ROLES_BY_ACTION.get(value.split(":", 1)[0])
 
 
-STYLES = {"cancel": "danger", "confirm": "success", "wallet": "success", "catalog": "primary"}
-
-
-def button(label, value, role=None):
-    """role=None picks a role from the callback; role="plain" draws a neutral button."""
+def button(label, value, role=None, style=None):
+    """role=None picks a role from the callback; role="plain" draws a button without an icon;
+    style="" keeps the icon but drops the role colour."""
     if role is None:
         role = role_for(value)
     if role == "plain":
@@ -106,7 +117,8 @@ def button(label, value, role=None):
         options["icon_custom_emoji_id"] = ICONS[role]
     elif role in FALLBACK and not any(label.startswith(icon) for icon in FALLBACK.values()):
         label = FALLBACK[role] + " " + label
-    return InlineKeyboardButton(text=label, style=STYLES.get(role), **options)
+    style = STYLES.get(role) if style is None else (style or None)
+    return InlineKeyboardButton(text=label, style=style, **options)
 
 
 def keyboard(rows):
@@ -114,23 +126,55 @@ def keyboard(rows):
 
 
 def icon(role):
-    fallback = FALLBACK[role]
-    return f'<tg-emoji emoji-id="{ICONS[role]}">{fallback}</tg-emoji>' if role in ICONS else fallback
+    return FALLBACK[role]
+
+
+_REVERSE = {}
+for _role, _emoji in FALLBACK.items():
+    _REVERSE.setdefault(_emoji, _role)
+_PATTERN = re.compile("|".join(re.escape(e) for e in sorted(_REVERSE, key=len, reverse=True)))
+
+
+def premium(text):
+    """Upgrade known emoji in HTML text to premium custom emoji in one pass."""
+    if not ICONS or not text or "<tg-emoji" in text:
+        return text
+
+    def replace(match):
+        role = _REVERSE[match[0]]
+        return f'<tg-emoji emoji-id="{ICONS[role]}">{match[0]}</tg-emoji>' if role in ICONS else match[0]
+
+    return _PATTERN.sub(replace, text)
+
+
+NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
+
+
+async def show(message, text, rows, edit=False):
+    """Navigation edits the same message, so the chat does not fill up with old screens."""
+    markup = keyboard(rows)
+    text = premium(text)
+    if edit and hasattr(message, "edit_text"):
+        try:
+            await message.edit_text(
+                text, parse_mode="HTML", reply_markup=markup, link_preview_options=NO_PREVIEW
+            )
+            return
+        except TelegramBadRequest as error:
+            if "not modified" in str(error).lower():
+                return
+    await message.answer(text, parse_mode="HTML", reply_markup=markup, link_preview_options=NO_PREVIEW)
 
 
 async def load_icons(bot):
     try:
-        stickers = [
-            s
-            for s in await bot.get_forum_topic_icon_stickers()
-            if s.custom_emoji_id and s.custom_emoji_id.isdigit()
-        ]
-        if not stickers:
-            return
-        for role, emoji in ICON_CHOICES.items():
-            selected = next((s for s in stickers if s.emoji in emoji), None)
-            if selected:
-                ICONS[role] = selected.custom_emoji_id
+        by_emoji = {}
+        for sticker in await bot.get_forum_topic_icon_stickers():
+            if sticker.custom_emoji_id and sticker.custom_emoji_id.isdigit():
+                by_emoji.setdefault(_bare(sticker.emoji or ""), sticker.custom_emoji_id)
+        for role, emoji in FALLBACK.items():
+            if _bare(emoji) in by_emoji:
+                ICONS[role] = by_emoji[_bare(emoji)]
     except Exception:
         logging.getLogger("smena.bot").warning("Premium icons unavailable; using standard emoji")
 
