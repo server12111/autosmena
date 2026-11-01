@@ -15,6 +15,7 @@ from app.payments import check_payment, recover_stale_payments
 from app.services import allocate_order, recover_stale_orders, refresh_order
 
 log = logging.getLogger("smena.worker")
+CONCURRENCY = 8
 
 
 async def cycle(bot=None):
@@ -34,16 +35,28 @@ async def cycle(bot=None):
                 Payment.created_at > now() - 30 * 86400,
             )
         ).all()
-    for order_id, status in orders:
-        try:
-            await (allocate_order(order_id) if status == "reserved" else refresh_order(order_id))
-        except Exception as exc:
-            log.warning("Order check failed: id=%s type=%s", order_id, type(exc).__name__)
-    for payment_id in payments:
-        try:
-            await check_payment(payment_id)
-        except Exception as exc:
-            log.warning("Payment check failed: id=%s type=%s", payment_id, type(exc).__name__)
+    # Active numbers pile up over 60+ days: checking them one by one would delay every code
+    # (and every payment behind them) by the whole round. Run them in parallel, bounded.
+    limit = asyncio.Semaphore(CONCURRENCY)
+
+    async def order_job(order_id, status):
+        async with limit:
+            try:
+                await (allocate_order(order_id) if status == "reserved" else refresh_order(order_id))
+            except Exception as exc:
+                log.warning("Order check failed: id=%s type=%s", order_id, type(exc).__name__)
+
+    async def payment_job(payment_id):
+        async with limit:
+            try:
+                await check_payment(payment_id)
+            except Exception as exc:
+                log.warning("Payment check failed: id=%s type=%s", payment_id, type(exc).__name__)
+
+    await asyncio.gather(
+        *(payment_job(payment_id) for payment_id in payments),
+        *(order_job(order_id, status) for order_id, status in orders),
+    )
     await send_notices(bot)
 
 

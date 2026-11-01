@@ -190,13 +190,16 @@ class Banner:
 
 
 def visible_length(html):
-    return len(unescape(re.sub(r"<[^>]+>", "", html)))
+    # Telegram counts caption length in UTF-16 code units: most emoji take two.
+    return len(unescape(re.sub(r"<[^>]+>", "", html)).encode("utf-16-le")) // 2
 
 
 def remember(sent, banner):
     photo = getattr(sent, "photo", None)
     file_id = photo[-1].file_id if photo else None
     if isinstance(file_id, str):
+        if len(FILE_IDS) > 5000:  # personal cards add a key per data change: keep memory bounded
+            FILE_IDS.clear()
         FILE_IDS[banner.key] = file_id
 
 
