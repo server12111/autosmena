@@ -6,6 +6,7 @@ import pytest
 
 from app import bot
 from app.models import Order
+from tests.screens import FakeMessage
 
 
 @pytest.mark.asyncio
@@ -58,9 +59,9 @@ async def test_old_orders_remain_accessible_after_ten_newer_orders(database):
                     status="active",
                 )
             )
-    message = SimpleNamespace(answer=AsyncMock())
+    message = FakeMessage()
     await bot.orders(message, 123, offset=10)
-    markup = message.answer.call_args.kwargs["reply_markup"].inline_keyboard
+    markup = message.last()[2].inline_keyboard
     assert markup[0][0].callback_data == "order:" + f"{0:032x}"
     assert markup[1][0].callback_data == "orders:0"
 
@@ -106,7 +107,7 @@ def query(data, message=None):
         answer=AsyncMock(),
         from_user=SimpleNamespace(id=123, username="tester"),
         data=data,
-        message=message or SimpleNamespace(answer=AsyncMock(), edit_text=AsyncMock()),
+        message=message or FakeMessage(),
     )
 
 
@@ -183,19 +184,23 @@ async def test_quick_amount_creates_invoice(database):
     state = FakeState()
     event = query("deposit:demo")
     await bot.callback(event, state)
-    assert "amount:demo:5" in buttons(event.message.edit_text)
+    assert event.message.last()[0] == "answer_photo"  # wallet banner and text arrive together
+    assert "amount:demo:5" in event.message.buttons()
     bot.last_action.clear()
-    event = query("amount:demo:5")
+    photo = FakeMessage(photo=True)
+    event = query("amount:demo:5", photo)
     await bot.callback(event, state)
-    assert "$5.00" in event.message.edit_text.call_args.args[0]
+    # From a photo screen to a text screen: send the invoice, then remove the photo message.
+    assert photo.last()[0] == "answer" and "$5.00" in photo.text()
+    photo.delete.assert_awaited_once()
     assert state.state is None
 
 
 @pytest.mark.asyncio
 async def test_free_text_shows_menu(database):
-    message = SimpleNamespace(answer=AsyncMock(), from_user=SimpleNamespace(id=123, username="tester"))
+    message = FakeMessage()
     await bot.anything_else(message, FakeState())
-    assert "SMENA" in message.answer.call_args.args[0]
+    assert "SMENA" in message.text()
 
 
 @pytest.mark.asyncio
@@ -211,11 +216,11 @@ async def test_menu_has_no_help_or_payment_history_and_admin_only_for_owner(data
     from app.config import settings
 
     monkeypatch.setattr(settings, "admin_ids", "999")
-    message = SimpleNamespace(answer=AsyncMock())
+    message = FakeMessage()
     await bot.send_menu(message, 123)
-    assert not {"help", "payments", "adm:home"} & set(buttons(message.answer))
+    assert not {"help", "payments", "adm:home"} & set(message.buttons())
     await bot.send_menu(message, 999)
-    assert "adm:home" in buttons(message.answer)
+    assert "adm:home" in message.buttons()
 
 
 @pytest.mark.asyncio
@@ -225,16 +230,16 @@ async def test_profile_referral_and_api_screens(database):
         event = query(data)
         event.from_user.first_name = "Tester"
         await bot.callback(event, FakeState())
-        assert event.message.edit_text.await_count, data
+        assert event.message.screens(), data
     bot.last_action.clear()
     event = query("ref")
     await bot.callback(event, FakeState())
-    assert "start=ref_123" in event.message.edit_text.call_args.args[0]
+    assert "start=ref_123" in event.message.text()
     bot.last_action.clear()
     event = query("apikey")
     await bot.callback(event, FakeState())
-    key = next(b for b in buttons(event.message.edit_text) if b and b.startswith("smn_"))
-    assert key in event.message.edit_text.call_args.args[0]
+    key = next(b for b in event.message.buttons() if b and b.startswith("smn_"))
+    assert key in event.message.text()
 
 
 @pytest.mark.asyncio
@@ -264,29 +269,48 @@ async def test_code_again_button_after_first_code(database):
 
 
 @pytest.mark.asyncio
-async def test_screens_show_their_banner_as_large_preview_above_text(database, monkeypatch):
-    from app.config import settings
+async def test_banner_screens_are_photos_and_reuse_the_uploaded_copy(database):
+    from app import bot_ui
 
-    monkeypatch.setattr(settings, "banner_base_url", "https://cdn.example/brand")
-    bot.banner.cache_clear()
-    message = SimpleNamespace(answer=AsyncMock())
+    bot_ui.FILE_IDS.clear()
+    message = FakeMessage()
     await bot.send_menu(message, 123)
-    preview = message.answer.call_args.kwargs["link_preview_options"]
-    assert preview.url.startswith("https://cdn.example/brand/main.png?v=")
-    assert preview.show_above_text and preview.prefer_large_media
-    for data, name in (
-        ("catalog:0", "buy"),
-        ("orders", "numbers"),
-        ("ref", "ref"),
-        ("profile", "profile"),
-        ("wallet", "wallet"),
-    ):
+    name, args, kwargs = message.screens()[-1]
+    assert name == "answer_photo" and "SMENA" in kwargs["caption"]
+    first_upload = args[0]
+    assert not isinstance(first_upload, str)  # the bundled file is uploaded the first time
+    await bot.send_menu(message, 123)
+    assert message.screens()[-1][1][0] == "fid-1"  # then Telegram's stored copy is reused
+    for data, name in (("catalog:0", "buy"), ("orders", "numbers"), ("ref", "ref"), ("profile", "profile")):
         bot.last_action.clear()
-        event = query(data)
+        photo = FakeMessage(photo=True)
+        event = query(data, photo)
         event.from_user.first_name = "T"
         await bot.callback(event, FakeState())
-        assert f"/{name}.png" in event.message.edit_text.call_args.kwargs["link_preview_options"].url, data
-    bot.banner.cache_clear()
+        assert photo.last()[0] == "edit_media", data  # photo screens change in place
+        media = photo.screens()[-1][1][0].media
+        assert getattr(media, "filename", "").startswith(name), data
+
+
+@pytest.mark.asyncio
+async def test_personal_banner_is_rendered_once_per_data_state(database, monkeypatch):
+    from app import banners
+
+    calls = []
+    real = banners.render
+    monkeypatch.setattr(
+        banners, "render", lambda kind, data, fmt="PNG": calls.append(kind) or real(kind, data, fmt)
+    )
+    first = bot.personal_banner("profile", 123)
+    again = bot.personal_banner("profile", 123)
+    assert first.key == again.key and not calls  # nothing is drawn until Telegram needs the file
+    first.file()
+    assert calls == ["profile"]
+    with database.begin() as db:
+        from app.models import User
+
+        db.get(User, 123).balance = 5_000_000
+    assert bot.personal_banner("profile", 123).key != first.key  # new balance, new picture
 
 
 @pytest.mark.asyncio

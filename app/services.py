@@ -184,7 +184,7 @@ async def allocate_order(order_id):
                     user_id=order.user_id,
                     event="allocated:" + order.id,
                     text=(
-                        f"✅ <b>Номер {'продлён' if parent else 'готов'}</b>\n\n"
+                        f"✅ <b>{'Приём кодов продлён' if parent else 'Номер готов'}</b>\n\n"
                         f"<code>{escape(format_phone(order.phone))}</code>\n"
                         + ("" if parent else "Запросите код в Telegram — он придёт в этот чат.")
                     ),

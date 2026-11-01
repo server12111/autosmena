@@ -8,6 +8,7 @@ from sqlalchemy import select
 from app import bot, reseller
 from app.models import Notice, Payment, User, now
 from app.services import credit_payment, ensure_user, referral_stats
+from tests.screens import FakeMessage
 
 
 @pytest.fixture
@@ -30,7 +31,7 @@ def test_referrer_is_attached_only_to_new_users(database):
 
 @pytest.mark.asyncio
 async def test_start_link_registers_referral(database):
-    message = SimpleNamespace(answer=AsyncMock(), from_user=SimpleNamespace(id=600, username="friend"))
+    message = FakeMessage(user_id=600, username="friend")
     state = SimpleNamespace(clear=AsyncMock())
     await bot.start(message, state, SimpleNamespace(args="ref_123"))
     with database() as db:

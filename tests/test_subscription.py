@@ -6,6 +6,7 @@ import pytest
 from app import bot, subscription
 from app.config import settings
 from app.models import User
+from tests.screens import FakeMessage
 
 REAL_MEMBER_STATUS = subscription.member_status
 
@@ -92,16 +93,14 @@ async def test_check_button_rechecks_without_cache(channel):
     query = CallbackQuery.model_construct(
         data="subcheck",
         from_user=SimpleNamespace(id=123, username="u"),
-        message=SimpleNamespace(
-            answer=AsyncMock(), edit_text=AsyncMock(), chat=SimpleNamespace(type="private")
-        ),
+        message=FakeMessage(),
     )
     object.__setattr__(query, "answer", AsyncMock())
     await bot.SubscriptionGate()(AsyncMock(), query, {"bot": tg})
     assert query.answer.call_args.kwargs.get("show_alert")
     tg.status = "member"
     await bot.SubscriptionGate()(AsyncMock(), query, {"bot": tg})
-    assert "SMENA" in query.message.edit_text.call_args.args[0]
+    assert "SMENA" in query.message.text()
 
 
 @pytest.mark.asyncio
@@ -166,7 +165,7 @@ async def test_raw_status_reads_admin_answer_that_aiogram_models_reject(monkeypa
             assert url.endswith("/getChatMember") and json == {"chat_id": -1001, "user_id": 1}
             return Response()
 
-    monkeypatch.setattr(subscription.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(subscription, "client", Client)
     real = SimpleNamespace(member_status=REAL_MEMBER_STATUS)
     assert await real.member_status(SimpleNamespace(token="t"), -1001, 1) == "administrator"
     answer["result"] = {"status": "restricted", "is_member": True, "user": answer["result"]["user"]}

@@ -135,7 +135,7 @@ NEUTRAL = {
 }
 
 
-def render(kind, data):
+def render(kind, data, fmt="PNG"):
     """data=NEUTRAL draws the same card without anyone's name or ID (static fallback)."""
     image = base(kind).copy()
     draw = ImageDraw.Draw(image)
@@ -173,7 +173,10 @@ def render(kind, data):
         draw = ImageDraw.Draw(image)
         draw.text((819, 545), label, font=face, fill=(124, 240, 160, 255), anchor="lm")
     output = BytesIO()
-    image.convert("RGB").save(output, "PNG", optimize=True)
+    if fmt == "JPEG":
+        image.convert("RGB").save(output, "JPEG", quality=92)
+    else:
+        image.convert("RGB").save(output, "PNG", optimize=True)
     return output.getvalue()
 
 

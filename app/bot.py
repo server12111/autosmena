@@ -17,7 +17,14 @@ from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import SimpleEventIsolation
-from aiogram.types import BotCommand, BotCommandScopeChat, CallbackQuery, Message
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeChat,
+    BufferedInputFile,
+    CallbackQuery,
+    FSInputFile,
+    Message,
+)
 from sqlalchemy import func, or_, select
 
 from app import bot_admin, subscription, webhooks
@@ -26,6 +33,7 @@ from app.bot_ui import (
     PROVIDER_LABELS,
     STATUS_LABELS,
     STATUS_ROLES,
+    Banner,
     PremiumFallback,
     copy_phone,
     format_date,
@@ -129,25 +137,30 @@ BRAND = Path(__file__).parent / "static" / "brand"
 
 
 @lru_cache(maxsize=None)
-def banner(name):
-    """Public URL of a section banner; the content hash makes Telegram refetch a changed image."""
+def banner_version(name):
     path = BRAND / f"{name}.png"
-    if not path.exists():
+    return sha256(path.read_bytes()).hexdigest()[:10] if path.exists() else None
+
+
+def banner(name):
+    """Section picture uploaded from the bundled file; the content hash in the key makes a
+    replaced image upload again, otherwise Telegram reuses the stored copy instantly."""
+    version = banner_version(name)
+    if version is None:
         return None
-    version = sha256(path.read_bytes()).hexdigest()[:10]
-    base = (settings.banner_base_url or public_url() + "/static/brand").rstrip("/")
-    return f"{base}/{name}.png?v={version}"
+    path = BRAND / f"{name}.png"
+    return Banner(f"static:{name}:{version}", lambda: FSInputFile(path, filename=f"{name}.png"))
 
 
 def personal_banner(kind, user_id):
-    """Profile/wallet card with live data, served by this app; plain artwork when images come
-    from an external static host (BANNER_BASE_URL) that cannot render per-user cards."""
+    """Profile/wallet card drawn with the user's own data. The same data reuses the uploaded copy."""
     from app import banners
 
     data = banners.user_data(user_id)
-    if settings.banner_base_url or data is None:
+    if data is None:
         return banner(kind)
-    return f"{public_url()}/banner/{kind}/{user_id}/{banners.signature(user_id)}.png?v={banners.data_version(data)}"
+    key = f"{kind}:{user_id}:{banners.data_version(data)}"
+    return Banner(key, lambda: BufferedInputFile(banners.render(kind, data, "JPEG"), filename=f"{kind}.jpg"))
 
 
 def balance_of(user_id):
@@ -193,9 +206,9 @@ async def send_menu(message, user_id, edit=False):
         message,
         f"{prefix}✈️ <b>SMENA</b> — номера Telegram США\n\n"
         "Американские номера <b>+1</b>: купил, вошёл — код уже в чате 🔥\n\n"
-        f"{DOT} Аренда <b>{escape(RENTAL_LABEL.lower())}</b>\n"
+        f"{DOT} Коды на номер приходят <b>{escape(RENTAL_LABEL.lower())}</b>\n"
         f"{DOT} Код входа приходит <b>прямо сюда</b>\n"
-        f"{DOT} Повторные коды — весь срок аренды\n"
+        f"{DOT} Повторные коды — без ограничений весь срок\n"
         f"{DOT} Пополнение криптой: USDT и TON\n\n"
         f"<blockquote>💰 Баланс: <b>${display(balance)}</b></blockquote>{status}",
         [
@@ -246,7 +259,7 @@ async def catalog(message, offset=0, country_id=None, edit=False):
         message,
         "🛒 <b>Купить номер · США</b>\n\n"
         f"{DOT} Виртуальный номер <b>+1</b> под Telegram\n"
-        f"{DOT} Аренда {escape(RENTAL_LABEL.lower())}, продление в пару нажатий\n"
+        f"{DOT} Коды приходят {escape(RENTAL_LABEL.lower())}, продление в пару нажатий\n"
         f"{DOT} Номер выдаётся сразу, код придёт в этот чат\n\n{description}",
         rows,
         edit,
@@ -276,7 +289,7 @@ async def product_screen(message, user_id, product_id, edit=False):
         message,
         f"📱 <b>{KIND_LABELS[kind]} · США</b>\n\n"
         f"{DOT} Номер <b>+1</b> под Telegram\n"
-        f"{DOT} Аренда: {escape(RENTAL_LABEL.lower())}\n"
+        f"{DOT} Приём кодов: {escape(RENTAL_LABEL.lower())}\n"
         f"{DOT} Код входа: приходит в этот чат\n\n"
         f"<blockquote>💎 Цена: <b>${display(price)}</b>\n💰 Баланс: ${display(balance)}</blockquote>\n"
         f"{footer}",
@@ -295,7 +308,7 @@ def order_screen(order, archived, checked=False, again=False):
         lines.append(f"📱 <code>{escape(format_phone(order.phone))}</code>")
     lines.append(f"{DOT} Статус: {status}")
     if until and order.status in ("waiting", "active"):
-        lines.append(f"{DOT} Аренда до: {escape(until)}")
+        lines.append(f"{DOT} Коды приходят до: {escape(until)}")
     live = order.status in ("waiting", "active") and not archived
     if order.sms:
         lines += ["", f"<blockquote>💬 Последний код: <code>{escape(order.sms)}</code></blockquote>"]
@@ -310,7 +323,7 @@ def order_screen(order, archived, checked=False, again=False):
     elif order.status in ("reserved", "allocating"):
         lines += ["", "⚡️ Получаем номер, это занимает несколько секунд."]
     elif order.status == "expired":
-        lines += ["", "📆 Срок аренды закончился."]
+        lines += ["", "📆 Срок приёма кодов закончился. Продлите, чтобы снова получать коды."]
     if again and live:
         lines += [
             "",
@@ -334,7 +347,7 @@ def order_screen(order, archived, checked=False, again=False):
     if order.status in ("reserved", "allocating"):
         rows.append([("Обновить", "order:" + order.id, "refresh")])
     if order.status in ("active", "expired") and not order.parent_id and not archived:
-        rows.append([("Продлить номер", "renew:" + order.id)])
+        rows.append([("Продлить приём кодов", "renew:" + order.id)])
     rows.append([("Мои номера", "orders"), ("Профиль", "profile", "user", "")])
     return "\n".join(lines), rows
 
@@ -390,7 +403,7 @@ async def orders(message, user_id, offset=0, edit=False):
         message,
         "📁 <b>Мои номера</b>\n\n"
         f"{DOT} Нажмите на номер, чтобы открыть карточку\n"
-        f"{DOT} Там: скопировать, получить код, продлить",
+        f"{DOT} Там: скопировать номер, получить код, продлить приём кодов",
         buttons + [navigation, [("Профиль", "profile", "user", ""), HOME]],
         edit,
         banner=banner("numbers"),
@@ -730,8 +743,8 @@ async def callback(query: CallbackQuery, state: FSMContext):
                 footer = f"💸 Не хватает <b>${display(price - balance)}</b> — пополните кошелёк."
             await show(
                 message,
-                "📆 <b>Продление номера</b>\n\n"
-                f"📱 <code>{escape(format_phone(phone))}</code>\n{DOT} Срок: +1 месяц\n\n"
+                "📆 <b>Продление приёма кодов</b>\n\n"
+                f"📱 <code>{escape(format_phone(phone))}</code>\n{DOT} Коды будут приходить ещё +1 месяц\n\n"
                 f"<blockquote>💎 Цена: <b>${display(price)}</b>\n💰 Баланс: ${display(balance)}</blockquote>\n{footer}",
                 rows + [[("Назад к номеру", "order:" + argument, "phone", "")]],
                 edit=True,
@@ -745,6 +758,8 @@ async def callback(query: CallbackQuery, state: FSMContext):
             )
             await show(message, "⚡️ <b>Продлеваем номер…</b>", [], edit=True)
             await allocate_order(order.id)
+            mark_notice_sent("allocated:" + order.id)
+            mark_notice_sent("refund:" + order.id)
             with Session() as db:
                 renewed = db.get(Order, order.id)
             if renewed.status == "completed":
@@ -947,7 +962,13 @@ async def run():
 
     async def consume_webhooks():
         while True:
-            if not await process_telegram_event(bot, dispatcher):
+            try:
+                handled = await process_telegram_event(bot, dispatcher)
+            except Exception:
+                # A locked database must not stop update processing or restart the container.
+                logging.getLogger("smena.bot").exception("Telegram event queue failed; retrying")
+                handled = False
+            if not handled:
                 await asyncio.sleep(0.25)
 
     consumer = None

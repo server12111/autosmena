@@ -2,10 +2,17 @@
 
 import logging
 import re
+from html import unescape
 
 from aiogram.client.session.middlewares.base import BaseRequestMiddleware
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
+from aiogram.types import (
+    CopyTextButton,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaPhoto,
+    LinkPreviewOptions,
+)
 
 ICONS = {}
 STATUS_LABELS = {
@@ -166,29 +173,81 @@ def premium(text):
 NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 
+CAPTION_LIMIT = 1024
+FILE_IDS = {}  # banner key -> Telegram file_id, so each picture is uploaded once per process
+
+
+class Banner:
+    """A screen picture sent as a photo with the text as caption (appears together with the text).
+
+    key identifies the exact picture; file() builds the upload when Telegram has no copy yet."""
+
+    def __init__(self, key, file):
+        self.key, self.file = key, file
+
+    def media(self):
+        return FILE_IDS.get(self.key) or self.file()
+
+
+def visible_length(html):
+    return len(unescape(re.sub(r"<[^>]+>", "", html)))
+
+
+def remember(sent, banner):
+    photo = getattr(sent, "photo", None)
+    file_id = photo[-1].file_id if photo else None
+    if isinstance(file_id, str):
+        FILE_IDS[banner.key] = file_id
+
+
+async def drop(message):
+    try:
+        await message.delete()
+    except Exception:
+        pass  # Older than 48 hours or already gone: leaving it is harmless.
+
+
 async def show(message, text, rows, edit=False, banner=None):
     """Navigation edits the same message, so the chat does not fill up with old screens.
 
-    banner is an image URL shown as a large link preview above the text (the "quote" card),
-    which keeps the message a text message that can still be edited in place.
-    """
+    Screens with a banner are photo messages (picture and text arrive together); others are
+    text. Switching between the two kinds sends the new screen and deletes the old one."""
     markup = keyboard(rows)
     text = premium(text)
-    preview = (
-        LinkPreviewOptions(url=banner, prefer_large_media=True, show_above_text=True)
-        if banner
-        else NO_PREVIEW
-    )
+    has_photo = bool(getattr(message, "photo", None))
+    if banner is not None and visible_length(text) <= CAPTION_LIMIT:
+        if edit and has_photo:
+            try:
+                sent = await message.edit_media(
+                    InputMediaPhoto(media=banner.media(), caption=text, parse_mode="HTML"),
+                    reply_markup=markup,
+                )
+                remember(sent, banner)
+                return
+            except TelegramBadRequest as error:
+                if "not modified" in str(error).lower():
+                    return
+        sent = await message.answer_photo(
+            banner.media(), caption=text, parse_mode="HTML", reply_markup=markup
+        )
+        remember(sent, banner)
+        if edit:
+            await drop(message)
+        return
+    if edit and has_photo:
+        await message.answer(text, parse_mode="HTML", reply_markup=markup, link_preview_options=NO_PREVIEW)
+        await drop(message)
+        return
     if edit and hasattr(message, "edit_text"):
         try:
             await message.edit_text(
-                text, parse_mode="HTML", reply_markup=markup, link_preview_options=preview
+                text, parse_mode="HTML", reply_markup=markup, link_preview_options=NO_PREVIEW
             )
             return
         except TelegramBadRequest as error:
             if "not modified" in str(error).lower():
                 return
-    await message.answer(text, parse_mode="HTML", reply_markup=markup, link_preview_options=preview)
+    await message.answer(text, parse_mode="HTML", reply_markup=markup, link_preview_options=NO_PREVIEW)
 
 
 async def load_icons(bot):
@@ -236,9 +295,15 @@ class PremiumFallback(BaseRequestMiddleware):
                         ]
                     }
                 )
-            text = getattr(method, "text", None)
-            if isinstance(text, str) and "<tg-emoji" in text:
-                changes["text"] = re.sub(r"</?tg-emoji\b[^>]*>", "", text)
+            strip = re.compile(r"</?tg-emoji\b[^>]*>")
+            for field in ("text", "caption"):
+                value = getattr(method, field, None)
+                if isinstance(value, str) and "<tg-emoji" in value:
+                    changes[field] = strip.sub("", value)
+            media = getattr(method, "media", None)
+            caption = getattr(media, "caption", None)
+            if isinstance(caption, str) and "<tg-emoji" in caption:
+                changes["media"] = media.model_copy(update={"caption": strip.sub("", caption)})
             if not changes:
                 raise
             ICONS.clear()

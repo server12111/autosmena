@@ -21,15 +21,25 @@ log = logging.getLogger("smena.subscription")
 _verified = {}
 
 
+_client = None
+
+
+def client():
+    # One pooled client per process: checks run on every update of an unverified user.
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=15)
+    return _client
+
+
 async def member_status(bot, chat_id, user_id):
     """Raw getChatMember status. aiogram's typed models reject current Telegram answers for
     channel admins (a field the library marks required is not sent), so only the status
     string is read here. Returns None when Telegram refuses to answer."""
-    async with httpx.AsyncClient(timeout=15) as client:
-        response = await client.post(
-            f"https://api.telegram.org/bot{bot.token}/getChatMember",
-            json={"chat_id": chat_id, "user_id": user_id},
-        )
+    response = await client().post(
+        f"https://api.telegram.org/bot{bot.token}/getChatMember",
+        json={"chat_id": chat_id, "user_id": user_id},
+    )
     data = response.json()
     if not data.get("ok"):
         log.warning("getChatMember refused: chat=%s description=%s", chat_id, data.get("description", ""))
