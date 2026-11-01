@@ -102,6 +102,17 @@ async def deliver(bot, notice):
         )
 
 
+async def guarded(name, step, pause):
+    """A transient failure (supplier, Telegram, a locked database) must not stop the loop:
+    the supervisor would otherwise restart the whole container."""
+    while True:
+        try:
+            await step()
+        except Exception:
+            log.exception("Worker loop %s failed; retrying", name)
+        await asyncio.sleep(pause)
+
+
 async def run():
     settings.validate_runtime()
     from aiogram import Bot
@@ -111,24 +122,22 @@ async def run():
         bot.session.middleware(PremiumFallback())
         await load_icons(bot)
 
+    cleaned = {"at": 0}
+
+    async def payment_events():
+        await webhooks.process_payments()
+        if now() - cleaned["at"] >= 86400:
+            webhooks.cleanup()
+            cleaned["at"] = now()
+
     async def periodic():
-        while True:
-            await cycle()
-            await asyncio.sleep(settings.poll_seconds)
+        await guarded("orders", cycle, settings.poll_seconds)
 
     async def webhook_events():
-        cleaned = 0
-        while True:
-            await webhooks.process_payments()
-            if now() - cleaned >= 86400:
-                webhooks.cleanup()
-                cleaned = now()
-            await asyncio.sleep(1)
+        await guarded("payments", payment_events, 1)
 
     async def notifications():
-        while True:
-            await send_notices(bot)
-            await asyncio.sleep(1)
+        await guarded("notices", lambda: send_notices(bot), 1)
 
     tasks = [asyncio.create_task(job()) for job in (periodic, webhook_events, notifications)]
     try:
