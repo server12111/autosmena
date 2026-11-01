@@ -136,7 +136,7 @@ async def orders(message, user_id, offset=0, order_id=None):
         if (
             parsed.scheme == "https"
             and parsed.hostname
-            and (parsed.hostname == "api.cc" or parsed.hostname.endswith(".api.cc"))
+            and (parsed.hostname in ("api.cc", "api.sms8.net") or parsed.hostname.endswith(".api.cc"))
         ):
             buttons.insert(0, [("Открыть приём SMS", url)])
         if order.status in ("active", "expired") and not order.parent_id and not archive[order.id]:

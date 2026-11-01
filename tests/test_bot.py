@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -5,6 +6,37 @@ import pytest
 
 from app import bot
 from app.models import Order
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url,allowed",
+    [
+        ("https://api.sms8.net/api/record?token=test", True),
+        ("https://api.cc/api/record?token=test", True),
+        ("https://api.sms8.net.evil.example/api/record?token=test", False),
+        ("http://api.sms8.net/api/record?token=test", False),
+    ],
+)
+async def test_supplier_reception_link_is_available_only_for_trusted_https_hosts(database, url, allowed):
+    with database.begin() as db:
+        db.add(
+            Order(
+                id="f" * 32,
+                request_key="reception-link",
+                user_id=123,
+                product_id=1,
+                price=1000000,
+                cost=1000000,
+                status="active",
+                supplier_payload=json.dumps({"api": url}),
+            )
+        )
+    message = SimpleNamespace(answer=AsyncMock())
+    await bot.orders(message, 123)
+    markup = message.answer.call_args_list[0].kwargs["reply_markup"]
+    urls = [button.url for row in markup.inline_keyboard for button in row if button.url]
+    assert (url in urls) is allowed
 
 
 @pytest.mark.asyncio
