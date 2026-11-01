@@ -27,8 +27,6 @@ class Settings(BaseSettings):
     referral_percent: int = 5
     # Public HTTPS address shown to resellers; the admin "Вебхуки" domain overrides it.
     public_url: str = "https://bot-1793540100-9906-srvnkproject.bothost.tech"
-    # Where Telegram fetches section banners; empty = this app's /static/brand on public_url.
-    banner_base_url: str = ""
     apicc_api_key: str = ""
     apicc_url: str = "https://api.cc"
     apicc_usd_rate: str = ""

@@ -86,3 +86,24 @@ async def test_rejected_premium_markup_falls_back_without_losing_button_action(m
 def test_owner_bullet_emoji_becomes_premium(monkeypatch):
     monkeypatch.setattr(bot_ui, "ICONS", dict(bot_ui.FIXED_ICONS))
     assert bot_ui.premium("🔴 пункт") == '<tg-emoji emoji-id="5375308238466074564">🔴</tg-emoji> пункт'
+
+
+@pytest.mark.asyncio
+async def test_premium_fallback_cleans_photo_captions(monkeypatch):
+    from aiogram.methods import EditMessageMedia, SendPhoto
+    from aiogram.types import InputMediaPhoto
+
+    monkeypatch.setattr(bot_ui, "ICONS", {"brand": "1"})
+    caption = bot_ui.premium("✈️ Меню")
+    for method in (
+        SendPhoto(chat_id=1, photo="fid", caption=caption, parse_mode="HTML"),
+        EditMessageMedia(chat_id=1, message_id=2, media=InputMediaPhoto(media="fid", caption=caption)),
+    ):
+        request = AsyncMock(
+            side_effect=[TelegramBadRequest(method=method, message="CUSTOM_EMOJI_INVALID"), "ok"]
+        )
+        assert await bot_ui.PremiumFallback()(request, None, method) == "ok"
+        retry = request.call_args.args[1]
+        sent = retry.caption if hasattr(retry, "caption") and retry.caption else retry.media.caption
+        assert sent == "✈️ Меню"
+        monkeypatch.setattr(bot_ui, "ICONS", {"brand": "1"})

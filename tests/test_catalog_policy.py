@@ -1,6 +1,3 @@
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
-
 import pytest
 
 from app import bot
@@ -8,6 +5,7 @@ from app.catalog_policy import permitted_code
 from app.config import Settings
 from app.models import Product, User
 from app.services import adjust_balance, reserve_order
+from tests.screens import FakeMessage
 
 
 @pytest.mark.parametrize("code", ["2:999:1", "5:711:1", "8:74:1", "6:74:1", "demo:gb:tg", "demo:us:wa"])
@@ -27,9 +25,10 @@ def test_old_enabled_button_cannot_buy_another_service(database):
 
 @pytest.mark.asyncio
 async def test_search_goes_straight_to_telegram_catalog_without_other_countries(database):
-    message = SimpleNamespace(text="/search Google", answer=AsyncMock())
+    message = FakeMessage()
+    message.text_value = "/search Google"
     await bot.search_command(message)
-    text = message.answer.call_args.args[0]
+    text = message.text()
     assert "Telegram" in text and "США" in text
     assert "Google" not in text and "Выберите страну" not in text
 

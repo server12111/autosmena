@@ -6,6 +6,7 @@ import pytest
 from app import bot, subscription
 from app.config import settings
 from app.models import User
+from tests.screens import FakeMessage
 
 REAL_MEMBER_STATUS = subscription.member_status
 
@@ -92,16 +93,14 @@ async def test_check_button_rechecks_without_cache(channel):
     query = CallbackQuery.model_construct(
         data="subcheck",
         from_user=SimpleNamespace(id=123, username="u"),
-        message=SimpleNamespace(
-            answer=AsyncMock(), edit_text=AsyncMock(), chat=SimpleNamespace(type="private")
-        ),
+        message=FakeMessage(),
     )
     object.__setattr__(query, "answer", AsyncMock())
     await bot.SubscriptionGate()(AsyncMock(), query, {"bot": tg})
     assert query.answer.call_args.kwargs.get("show_alert")
     tg.status = "member"
     await bot.SubscriptionGate()(AsyncMock(), query, {"bot": tg})
-    assert "SMENA" in query.message.edit_text.call_args.args[0]
+    assert "SMENA" in query.message.text()
 
 
 @pytest.mark.asyncio
