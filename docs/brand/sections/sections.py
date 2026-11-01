@@ -125,3 +125,29 @@ names.append(section("neutral_profile", *PROFILE_ARGS[1:6], """
 <div class="glass card"><div class="row1"><div class="ava"><svg viewBox="0 0 24 24" width="44" height="44"><circle cx="12" cy="8.5" r="4.2" fill="#fff"/><path d="M3.8 20.5c1-4.2 4.4-6.6 8.2-6.6s7.2 2.4 8.2 6.6" fill="#fff"/></svg></div><div><div class="nm">Ваш аккаунт</div><div class="id muted">баланс, номера и бонусы</div></div></div>
 <div class="list"><div>📱 Мои номера <span>коды и продление</span></div><div>⭐️ Рефералы <span>5% с пополнений</span></div><div>📣 API <span>для реселлеров</span></div></div></div>"""))
 json.dump({n: [1280, 720] for n in names}, open('list.json', 'w'))
+
+# ---- main menu alternatives ----
+main_names = []
+main_names.append(section("main_cards", "SMENA", "Номера Telegram<br>США · +1", "Купил — вошёл — код уже в чате", ["60+ дней аренды", "Код прямо в чат", "Оплата криптой"], """
+.c{position:absolute;padding:24px 26px;color:#fff}
+.c .l{font-size:17px;color:#93A3C2;font-weight:600}
+.c .v{margin-top:8px;font-family:'JetBrains Mono';font-weight:700;font-size:30px;color:#fff;letter-spacing:1px}
+.c .code{margin-top:6px;font-family:'JetBrains Mono';font-weight:800;font-size:64px;letter-spacing:8px;color:#7DD6FF}
+.c1{left:0;top:40px;width:400px;transform:rotate(-4deg)}
+.c2{left:90px;top:200px;width:380px;transform:rotate(3deg);background:linear-gradient(135deg,rgba(42,171,238,.32),rgba(18,114,214,.18))}
+.c3{left:20px;top:420px;width:330px;transform:rotate(-2deg)}
+.st{display:inline-flex;align-items:center;gap:8px;margin-top:10px;padding:6px 12px;border-radius:10px;background:rgba(52,199,89,.18);border:1px solid rgba(52,199,89,.5);color:#7CF0A0;font-weight:700;font-size:16px}
+.price{font-size:44px;font-weight:900;margin-top:4px}
+""", """<div class="glass c c1"><div class="l">📱 Ваш номер</div><div class="v">+1 775 295 3734</div><div class="st">● Активен · 60+ дней</div></div>
+<div class="glass c c2"><div class="l">💬 Код входа в Telegram</div><div class="code">48512</div></div>
+<div class="glass c c3"><div class="l">⚡ Выдача номера</div><div class="price">за 10 секунд</div></div>""", h1size=84))
+
+main_names.append(section("main_plus", "SMENA", "Американские<br>номера Telegram", "Аренда 60+ дней · коды приходят в бот", ["Мгновенно", "Код в чат", "USDT · TON"], """
+.tile{position:absolute;left:90px;top:90px;width:340px;height:340px;border-radius:80px;display:flex;align-items:center;justify-content:center}
+.tile b{font-weight:900;font-size:200px;letter-spacing:-12px;margin-left:-12px;background:linear-gradient(180deg,#fff 45%,#CFE0FF);-webkit-background-clip:text;color:transparent}
+.row{position:absolute;left:40px;top:470px;width:440px;display:flex;justify-content:center;gap:12px}
+.o{position:relative;padding:13px 20px;border-radius:16px;font-weight:800;font-size:20px;color:#fff;white-space:nowrap}
+.dot{position:absolute;left:390px;top:66px;width:70px;height:70px;border-radius:50%;background:#E63946;border:6px solid #16244F;box-shadow:0 10px 24px rgba(230,57,70,.5);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:26px}
+""", """<div class="glass tile"><b>+1</b></div><div class="dot">1</div>
+<div class="row"><div class="glass o">💬 48512</div><div class="glass o">⚡ за 10 секунд</div></div>""", h1size=84))
+json.dump({n: [1280, 720] for n in main_names}, open('list.json', 'w'))

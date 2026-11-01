@@ -124,18 +124,25 @@ def avatar(image, center, radius, letter):
     )
 
 
+NEUTRAL = {"user_id": None, "username": "", "balance": "0.00", "numbers": 0, "referrals": 0, "deposited": "0.00"}
+
+
 def render(kind, data):
+    """data=NEUTRAL draws the same card without anyone's name or ID (static fallback)."""
     image = base(kind).copy()
     draw = ImageDraw.Draw(image)
     if kind == "profile":
         box = (740, 150, 1180, 570)
         glass(image, box)
-        name = handle(data["username"], data["user_id"])
-        letter = (data["username"] or "U")[:1].upper()
+        neutral = data["user_id"] is None
+        name = "Мой профиль" if neutral else handle(data["username"], data["user_id"])
+        letter = "★" if neutral else (data["username"] or "U")[:1].upper()
         avatar(image, (818, 228), 41, letter)
         text, face = fit(draw, name, "InterDisplay-ExtraBold.otf", 30, 270)
         draw.text((880, 200), text, font=face, fill=WHITE)
-        draw.text((881, 238), f"ID {data['user_id']}", font=font("JetBrainsMono-Medium.ttf", 19), fill=MUTED)
+        subtitle = "ID и баланс аккаунта" if neutral else f"ID {data['user_id']}"
+        face = font("InterDisplay-SemiBold.otf", 19) if neutral else font("JetBrainsMono-Medium.ttf", 19)
+        draw.text((881, 238), subtitle, font=face, fill=MUTED)
         draw.text((777, 306), "Баланс", font=font("InterDisplay-SemiBold.otf", 18), fill=MUTED)
         text, face = fit(draw, "$" + data["balance"], "InterDisplay-Black.otf", 58, 366)
         draw.text((775, 334), text, font=face, fill=WHITE)
