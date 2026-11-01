@@ -107,3 +107,8 @@ async def test_premium_fallback_cleans_photo_captions(monkeypatch):
         sent = retry.caption if hasattr(retry, "caption") and retry.caption else retry.media.caption
         assert sent == "✈️ Меню"
         monkeypatch.setattr(bot_ui, "ICONS", {"brand": "1"})
+
+
+def test_caption_length_counts_like_telegram():
+    assert bot_ui.visible_length("<b>ok</b> &amp;") == 4
+    assert bot_ui.visible_length("🔥") == 2  # emoji are two UTF-16 units

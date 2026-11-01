@@ -286,3 +286,34 @@ async def test_only_recipient_errors_drop_a_notice(database):
     with database() as db:
         sent = {n.event: n.sent for n in db.scalars(select(Notice))}
     assert sent == {"sms:keep": False, "test:gone": True}
+
+
+@pytest.mark.asyncio
+async def test_active_numbers_are_checked_in_parallel(database, monkeypatch):
+    import asyncio
+    import time as clock
+
+    with database.begin() as db:
+        for i in range(16):
+            db.add(
+                Order(
+                    id=f"{i:032x}",
+                    request_key=f"par-{i}",
+                    user_id=123,
+                    product_id=1,
+                    status="active",
+                    price=1,
+                    cost=1,
+                    phone=f"+1555000{i:04d}",
+                )
+            )
+
+    async def slow_status(order):
+        await asyncio.sleep(0.2)
+        return State("active")
+
+    monkeypatch.setattr(services, "supplier", SimpleNamespace(status=slow_status))
+    started = clock.monotonic()
+    await worker.cycle(None)
+    # 16 checks x 0.2 s: one by one would take 3.2 s, with 8 at a time about 0.4 s.
+    assert clock.monotonic() - started < 1.5
