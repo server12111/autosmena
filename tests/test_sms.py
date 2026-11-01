@@ -244,3 +244,24 @@ async def test_plain_fallback_strips_premium_tags_and_entities(database):
     bot = SimpleNamespace(send_message=AsyncMock(side_effect=[error, None]))
     await worker.deliver(bot, notice)
     assert bot.send_message.call_args.args[1] == "✅ Готово & всё"
+
+
+@pytest.mark.asyncio
+async def test_worker_loop_survives_transient_errors(monkeypatch):
+    import asyncio
+
+    calls = {"n": 0}
+
+    async def flaky():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("database is locked")
+        raise asyncio.CancelledError  # stop the endless loop for the test
+
+    async def no_sleep(seconds):
+        pass
+
+    monkeypatch.setattr(worker.asyncio, "sleep", no_sleep)
+    with pytest.raises(asyncio.CancelledError):
+        await worker.guarded("orders", flaky, 0)
+    assert calls["n"] == 2  # the first failure was logged and the loop went on
