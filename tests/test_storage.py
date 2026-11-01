@@ -156,3 +156,22 @@ def test_supervisor_stops_remaining_services_when_one_fails(monkeypatch):
     with pytest.raises(RuntimeError, match="exit=1"):
         runtime.supervise([["admin"], ["worker"]])
     assert processes[1].stopped is True
+
+
+def test_plain_password_in_admin_password_hash_is_accepted(tmp_path):
+    from app.security import verify_password
+
+    first = storage.admin_password(tmp_path, "my-plain-pass")
+    assert first.startswith("scrypt:") and verify_password("my-plain-pass", first)
+    assert storage.admin_password(tmp_path, "my-plain-pass") == first  # stable across restarts
+    assert not (tmp_path / "admin-access.txt").exists()  # the owner already knows it
+
+
+def test_damaged_login_record_issues_new_password_instead_of_crashing(tmp_path):
+    from app.security import verify_password
+
+    for broken in ('{"hash": "plain"}', "not json", "[]"):
+        (tmp_path / "admin-auth.json").write_text(broken, encoding="utf-8")
+        hashed = storage.admin_password(tmp_path)
+        password = (tmp_path / "admin-access.txt").read_text(encoding="utf-8").split(": ", 1)[1].strip()
+        assert verify_password(password, hashed)
