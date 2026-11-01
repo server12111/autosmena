@@ -261,3 +261,23 @@ async def test_code_again_button_after_first_code(database):
     event = query("again:" + "e" * 32)
     await bot.callback(event, FakeState())
     assert "Ждём новый код" in event.message.edit_text.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_screens_show_their_banner_as_large_preview_above_text(database, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "banner_base_url", "https://cdn.example/brand")
+    bot.banner.cache_clear()
+    message = SimpleNamespace(answer=AsyncMock())
+    await bot.send_menu(message, 123)
+    preview = message.answer.call_args.kwargs["link_preview_options"]
+    assert preview.url.startswith("https://cdn.example/brand/main.png?v=")
+    assert preview.show_above_text and preview.prefer_large_media
+    for data, name in (("catalog:0", "numbers"), ("profile", "profile"), ("ref", "ref"), ("wallet", "wallet")):
+        bot.last_action.clear()
+        event = query(data)
+        event.from_user.first_name = "T"
+        await bot.callback(event, FakeState())
+        assert f"/{name}.png" in event.message.edit_text.call_args.kwargs["link_preview_options"].url, data
+    bot.banner.cache_clear()

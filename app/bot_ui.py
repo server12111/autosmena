@@ -156,20 +156,29 @@ def premium(text):
 NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 
-async def show(message, text, rows, edit=False):
-    """Navigation edits the same message, so the chat does not fill up with old screens."""
+async def show(message, text, rows, edit=False, banner=None):
+    """Navigation edits the same message, so the chat does not fill up with old screens.
+
+    banner is an image URL shown as a large link preview above the text (the "quote" card),
+    which keeps the message a text message that can still be edited in place.
+    """
     markup = keyboard(rows)
     text = premium(text)
+    preview = (
+        LinkPreviewOptions(url=banner, prefer_large_media=True, show_above_text=True)
+        if banner
+        else NO_PREVIEW
+    )
     if edit and hasattr(message, "edit_text"):
         try:
             await message.edit_text(
-                text, parse_mode="HTML", reply_markup=markup, link_preview_options=NO_PREVIEW
+                text, parse_mode="HTML", reply_markup=markup, link_preview_options=preview
             )
             return
         except TelegramBadRequest as error:
             if "not modified" in str(error).lower():
                 return
-    await message.answer(text, parse_mode="HTML", reply_markup=markup, link_preview_options=NO_PREVIEW)
+    await message.answer(text, parse_mode="HTML", reply_markup=markup, link_preview_options=preview)
 
 
 async def load_icons(bot):

@@ -5,7 +5,10 @@ import secrets
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
+from functools import lru_cache
+from hashlib import sha256
 from html import escape
+from pathlib import Path
 from urllib.parse import urlencode
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -68,6 +71,20 @@ class Deposit(StatesGroup):
     amount = State()
 
 
+BRAND = Path(__file__).parent / "static" / "brand"
+
+
+@lru_cache(maxsize=None)
+def banner(name):
+    """Public URL of a section banner; the content hash makes Telegram refetch a changed image."""
+    path = BRAND / f"{name}.png"
+    if not path.exists():
+        return None
+    version = sha256(path.read_bytes()).hexdigest()[:10]
+    base = (settings.banner_base_url or public_url() + "/static/brand").rstrip("/")
+    return f"{base}/{name}.png?v={version}"
+
+
 def balance_of(user_id):
     with Session() as db:
         user = db.get(User, user_id)
@@ -122,6 +139,7 @@ async def send_menu(message, user_id, edit=False):
             [("Админка", "adm:home", "admin")] if is_admin(user_id) else [],
         ],
         edit,
+        banner=banner("main"),
     )
 
 
@@ -165,6 +183,7 @@ async def catalog(message, offset=0, country_id=None, edit=False):
         f"Код входа придёт в этот чат.\n\n{description}",
         rows,
         edit,
+        banner=banner("numbers"),
     )
 
 
@@ -305,6 +324,7 @@ async def orders(message, user_id, offset=0, edit=False):
         f"{icon('orders')} <b>Мои номера</b>\n\nОткройте номер, чтобы скопировать его, проверить SMS или продлить.",
         buttons + [navigation, [("Профиль", "profile", "user", ""), HOME]],
         edit,
+        banner=banner("numbers"),
     )
 
 
@@ -343,6 +363,7 @@ async def profile(message, user_from, edit=False):
             [HOME],
         ],
         edit,
+        banner=banner("profile"),
     )
 
 
@@ -365,6 +386,7 @@ async def referrals(message, user_id, edit=False):
             [("Профиль", "profile", "user", ""), HOME],
         ],
         edit,
+        banner=banner("ref"),
     )
 
 
@@ -410,7 +432,7 @@ async def api_screen(message, user_id, edit=False, new_key=None):
             "через HTTP API. Списание — с баланса этого аккаунта, цены как в магазине."
         )
         rows = [[("Создать ключ", "apikey", "confirm")], [("Документация", "apidocs", "payments")]]
-    await show(message, text, rows + [[("Профиль", "profile", "user", ""), HOME]], edit)
+    await show(message, text, rows + [[("Профиль", "profile", "user", ""), HOME]], edit, banner=banner("api"))
 
 
 def paid_time(value):
@@ -516,6 +538,7 @@ async def wallet(message, user_id, edit=False):
         + ("Выберите способ пополнения:" if rows else "Пополнение временно недоступно."),
         rows + [[HOME]],
         edit,
+        banner=banner("wallet"),
     )
 
 
@@ -699,6 +722,7 @@ async def callback(query: CallbackQuery, state: FSMContext):
                     [("Кошелёк", "wallet")],
                 ],
                 edit=True,
+                banner=banner("wallet"),
             )
         elif action == "amount":
             provider, value = argument.split(":")
