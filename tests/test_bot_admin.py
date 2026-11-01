@@ -132,3 +132,27 @@ async def test_admin_refunds_review_order_once(admin):
     with admin() as db:
         assert db.get(User, 123).balance == 700000
         assert db.get(Order, "r" * 32).status == "refunded"
+
+
+@pytest.mark.asyncio
+async def test_admin_is_notified_when_purchase_needs_review(admin, monkeypatch):
+    from types import SimpleNamespace as NS
+
+    from app import services, worker
+
+    async def broken(code, request_id):
+        raise RuntimeError("supplier timeout after charge?")
+
+    monkeypatch.setattr(services, "supplier", NS(ready=True, allocate=broken))
+    monkeypatch.setattr(settings, "admin_ids", "777,999")  # 999 never opened the bot
+    with admin.begin() as db:
+        db.get(User, 123).balance = 5_000_000
+    order = services.reserve_order(123, 1, "review-notify", 1_000_000)
+    await services.allocate_order(order.id)
+    with admin() as db:
+        assert db.get(Order, order.id).status == "review"
+        notices = db.scalars(select(Notice).where(Notice.event.startswith("review-admin:"))).all()
+    assert [n.user_id for n in notices] == [777]
+    assert "Заказ на проверке" in notices[0].text
+    rows = worker.notice_buttons(notices[0].event, notices[0].text)
+    assert rows[0][0][1] == "adm:o:" + order.id
