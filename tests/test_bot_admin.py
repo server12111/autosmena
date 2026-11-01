@@ -1,0 +1,134 @@
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+from sqlalchemy import select
+
+from app import bot_admin
+from app.config import settings
+from app.models import Notice, Order, Product, User
+
+
+@pytest.fixture
+def admin(database, monkeypatch):
+    for module in (bot_admin,):
+        monkeypatch.setattr(module, "Session", database)
+    from app import services
+
+    monkeypatch.setattr(services, "Session", database)
+    monkeypatch.setattr(settings, "admin_ids", "777")
+    with database.begin() as db:
+        db.add(User(id=777, username="owner"))
+    return database
+
+
+class FakeState:
+    def __init__(self):
+        self.data, self.state = {}, None
+
+    async def set_state(self, value):
+        self.state = value
+
+    async def update_data(self, **values):
+        self.data.update(values)
+
+    async def get_data(self):
+        return dict(self.data)
+
+    async def clear(self):
+        self.data, self.state = {}, None
+
+
+def click(data, user=777):
+    message = SimpleNamespace(answer=AsyncMock(), edit_text=AsyncMock())
+    return SimpleNamespace(answer=AsyncMock(), from_user=SimpleNamespace(id=user), data=data, message=message)
+
+
+def typed(text, user=777):
+    return SimpleNamespace(answer=AsyncMock(), from_user=SimpleNamespace(id=user), text=text)
+
+
+@pytest.mark.asyncio
+async def test_strangers_cannot_open_admin(admin):
+    query = click("adm:home", user=123)
+    await bot_admin.admin_callback(query, FakeState())
+    assert not query.message.edit_text.await_count and not query.message.answer.await_count
+    message = typed("/admin", user=123)
+    await bot_admin.admin_command(message, FakeState())
+    assert not message.answer.await_count
+
+
+@pytest.mark.asyncio
+async def test_admin_home_shows_stats(admin):
+    query = click("adm:home")
+    await bot_admin.admin_callback(query, FakeState())
+    assert "Пользователи: <b>2</b>" in query.message.edit_text.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_admin_credits_balance_once_and_notifies_user(admin):
+    state = FakeState()
+    await bot_admin.admin_callback(click("adm:ask:credit:123"), state)
+    await bot_admin.admin_input(typed("2.50"), state)
+    await bot_admin.admin_input(typed("2.50"), state)  # stale dialog: no second credit
+    with admin() as db:
+        assert db.get(User, 123).balance == 2500000
+        assert len(db.scalars(select(Notice)).all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_debit_cannot_go_negative(admin):
+    state = FakeState()
+    await bot_admin.admin_callback(click("adm:ask:debit:123"), state)
+    message = typed("5")
+    await bot_admin.admin_input(message, state)
+    assert "Недостаточно" in message.answer.call_args.args[0]
+    with admin() as db:
+        assert db.get(User, 123).balance == 0
+
+
+@pytest.mark.asyncio
+async def test_admin_sets_price_and_toggles_product(admin):
+    state = FakeState()
+    await bot_admin.admin_callback(click("adm:ask:price:1"), state)
+    await bot_admin.admin_input(typed("1.25"), state)
+    await bot_admin.admin_callback(click("adm:toggle:1"), FakeState())
+    with admin() as db:
+        product = db.get(Product, 1)
+        assert product.fixed_price == 1250000 and product.enabled is False
+    message = typed("0.10")
+    await bot_admin.admin_callback(click("adm:ask:price:1"), state)
+    await bot_admin.admin_input(message, state)
+    assert "ниже закупки" in message.answer.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_admin_finds_user_by_username(admin):
+    state = FakeState()
+    await bot_admin.admin_callback(click("adm:find"), state)
+    message = typed("@Tester")
+    await bot_admin.admin_input(message, state)
+    assert "<code>123</code>" in message.answer.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_admin_refunds_review_order_once(admin):
+    with admin.begin() as db:
+        db.add(
+            Order(
+                id="r" * 32,
+                request_key="review",
+                user_id=123,
+                product_id=1,
+                price=700000,
+                cost=1,
+                status="review",
+            )
+        )
+    await bot_admin.admin_callback(click("adm:refund:" + "r" * 32), FakeState())
+    second = click("adm:refund:" + "r" * 32)
+    await bot_admin.admin_callback(second, FakeState())
+    assert "уже не на проверке" in second.message.answer.call_args.args[0]
+    with admin() as db:
+        assert db.get(User, 123).balance == 700000
+        assert db.get(Order, "r" * 32).status == "refunded"

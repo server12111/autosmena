@@ -3,6 +3,7 @@ import secrets
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
+from html import escape
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -12,7 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from app import webhooks
+from app import reseller, webhooks
 from app.catalog_policy import US_LABELS, allowed_codes, permitted_code
 from app.config import settings
 from app.db import Session
@@ -35,6 +36,7 @@ app = FastAPI(title="Smena", lifespan=lifespan, docs_url=None, redoc_url=None, o
 static = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static), name="static")
 login_attempts = defaultdict(deque)
+reseller.install(app)
 
 
 @app.middleware("http")
@@ -84,6 +86,21 @@ def authenticated(request: Request):
 @app.get("/")
 def index():
     return FileResponse(static / "index.html")
+
+
+@app.get("/banner/{kind}/{user_id}/{sig}.png")
+def personal_banner(kind: str, user_id: int, sig: str):
+    """Profile and wallet artwork with the user's own data, for Telegram link previews."""
+    from fastapi.responses import Response as Raw
+
+    from app import banners
+
+    if kind not in banners.KINDS or not banners.valid(user_id, sig):
+        raise HTTPException(404)
+    data = banners.user_data(user_id)
+    if data is None:
+        raise HTTPException(404)
+    return Raw(banners.render(kind, data), media_type="image/png")
 
 
 @app.get("/health")
@@ -311,7 +328,7 @@ async def review_order(order_id: str, body: OrderReview):
                     Notice(
                         user_id=order.user_id,
                         event="review-renewed:" + order.id,
-                        text=f"Продление {parent.phone} подтверждено после сверки. Новый срок: {state.payload['end_time']}.",
+                        text=f"✅ Продление {escape(parent.phone)} подтверждено. Новый срок: {escape(str(state.payload['end_time']))}.",
                     )
                 )
     else:
@@ -342,7 +359,7 @@ async def review_order(order_id: str, body: OrderReview):
                     Notice(
                         user_id=order.user_id,
                         event="review-attached:" + order.id,
-                        text=f"Заказ {order.id[:8]} восстановлен после сверки. Номер: {item['tel']}. Подробности в /orders.",
+                        text=f"✅ Заказ {order.id[:8]} восстановлен после сверки. Номер: <code>{escape(str(item['tel']))}</code>.",
                     )
                 )
     return {"ok": True}

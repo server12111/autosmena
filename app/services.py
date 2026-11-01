@@ -1,9 +1,11 @@
 import json
 from hashlib import sha256
+from html import escape
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
+from app.bot_ui import format_phone
 from app.catalog_policy import permitted_code
 from app.db import Session
 from app.models import Audit, Ledger, Notice, Order, Payment, Product, User, now
@@ -11,16 +13,23 @@ from app.money import display, sale_price
 from app.supplier import Rejected, supplier
 
 
-def ensure_user(user_id, username=""):
+def ensure_user(user_id, username="", referrer_id=None):
+    """Creates the user on first contact. A referrer is attached only to brand-new users."""
     try:
         with Session.begin() as db:
             user = db.get(User, user_id)
             if user is None:
-                db.add(User(id=user_id, username=username))
-            else:
-                user.username = username
+                referrer = (
+                    referrer_id
+                    if referrer_id and referrer_id != user_id and db.get(User, referrer_id)
+                    else None
+                )
+                db.add(User(id=user_id, username=username, referrer_id=referrer))
+                return True
+            user.username = username
     except IntegrityError:
         pass  # Simultaneous /start requests may race on the primary key.
+    return False
 
 
 def move_balance(db, user_id, delta, event, note="", require_unblocked=False):
@@ -117,7 +126,7 @@ def refund_order(db, order, reason):
         Notice(
             user_id=order.user_id,
             event="refund:" + order.id,
-            text=f"Заказ {order.id[:8]} отменён. Возвращено ${display(order.price)}.",
+            text=f"💸 Заказ {order.id[:8]} отменён. <b>${display(order.price)}</b> возвращены на баланс.",
         )
     )
 
@@ -172,8 +181,11 @@ async def allocate_order(order_id):
                 Notice(
                     user_id=order.user_id,
                     event="allocated:" + order.id,
-                    text=f"Номер: {order.phone}\nЗаказ {order.id[:8]} "
-                    + ("продлён." if parent else "готов."),
+                    text=(
+                        f"✅ <b>Номер {'продлён' if parent else 'готов'}</b>\n\n"
+                        f"<code>{escape(format_phone(order.phone))}</code>\n"
+                        + ("" if parent else "Запросите код в Telegram — он придёт в этот чат.")
+                    ),
                 )
             )
 
@@ -215,7 +227,7 @@ async def refresh_order(order_id, user_id=None, cancel=False):
                 Notice(
                     user_id=order.user_id,
                     event="sms:" + order.id,
-                    text=f"SMS для {order.phone}:\n{state.sms}",
+                    text=sms_text(order.phone, state.sms),
                 )
             )
         elif target == "refunding":
@@ -237,7 +249,7 @@ async def refresh_order(order_id, user_id=None, cancel=False):
                         Notice(
                             user_id=order.user_id,
                             event=event,
-                            text=f"Код Telegram для {order.phone}:\n{state.sms}",
+                            text=sms_text(order.phone, state.sms),
                         )
                     )
             elif count > seen_count:
@@ -245,9 +257,54 @@ async def refresh_order(order_id, user_id=None, cancel=False):
                     Notice(
                         user_id=order.user_id,
                         event=f"sms-count:{order.id}:{count}",
-                        text=f"Новые SMS для {order.phone}. Всего: {count}. Код появится в этом чате после обработки.",
+                        text=f"💬 Новое SMS на <code>{escape(format_phone(order.phone))}</code>. Код появится здесь после обработки.",
                     )
                 )
+
+
+def sms_text(phone, code):
+    return (
+        f"💬 <b>Код входа в Telegram</b>\n\n<code>{escape(code)}</code>\n\n"
+        f"Номер: <code>{escape(format_phone(phone))}</code>\n<i>Нажмите на код, чтобы скопировать.</i>"
+    )
+
+
+def mark_notice_sent(event):
+    """The bot already showed this result on screen; skip the duplicate notification."""
+    with Session.begin() as db:
+        db.execute(update(Notice).where(Notice.event == event).values(sent=True))
+
+
+def referral_bonus(db, payment):
+    """The inviter earns a share of every top-up of an invited user, once per payment."""
+    from app.config import settings
+
+    user = db.get(User, payment.user_id)
+    bonus = payment.amount * settings.referral_percent // 100 // 10000 * 10000
+    if not user.referrer_id or bonus <= 0 or not db.get(User, user.referrer_id):
+        return
+    move_balance(db, user.referrer_id, bonus, "ref:" + payment.id, f"referral user={user.id}")
+    db.add(
+        Notice(
+            user_id=user.referrer_id,
+            event="ref:" + payment.id,
+            text=f"💸 <b>Реферальный бонус +${display(bonus)}</b>\n\n"
+            f"Ваш реферал пополнил баланс на ${display(payment.amount)}.",
+        )
+    )
+
+
+def referral_stats(user_id):
+    from sqlalchemy import func
+
+    with Session() as db:
+        invited = db.scalar(select(func.count()).select_from(User).where(User.referrer_id == user_id))
+        earned = db.scalar(
+            select(func.coalesce(func.sum(Ledger.delta), 0)).where(
+                Ledger.user_id == user_id, Ledger.event.startswith("ref:")
+            )
+        )
+    return invited, earned
 
 
 def credit_payment(payment_id, transaction_hash=None):
@@ -262,11 +319,12 @@ def credit_payment(payment_id, transaction_hash=None):
             return False
         payment = db.get(Payment, payment_id)
         move_balance(db, payment.user_id, payment.amount, "payment:" + payment.id)
+        referral_bonus(db, payment)
         db.add(
             Notice(
                 user_id=payment.user_id,
                 event="payment:" + payment.id,
-                text=f"Баланс пополнен на ${display(payment.amount)}.",
+                text=f"✅ <b>Баланс пополнен на ${display(payment.amount)}</b>\n\nТеперь можно купить номер.",
             )
         )
         return True

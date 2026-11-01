@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
   "fastapi==0.162.0", "uvicorn[standard]>=0.38,<1", "sqlalchemy==2.1.6",
   "psycopg[binary]>=3.2,<4", "aiogram==3.31.0", "httpx>=0.28,<1",
-  "pydantic-settings>=2.10,<3", "alembic>=1.16,<2", "pytoniq-core>=0.1.44,<1"
+  "pydantic-settings>=2.10,<3", "alembic>=1.16,<2", "pytoniq-core>=0.1.44,<1", "pillow>=11,<13"
 ]
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "ruff>=0.14,<1"]
@@ -22,5 +22,5 @@ ignore = ["B008"]
 [tool.setuptools.packages.find]
 include = ["app*"]
 [tool.setuptools.package-data]
-app = ["static/*"]
+app = ["static/*", "static/brand/*", "static/brand/base/*", "static/fonts/*"]
 
