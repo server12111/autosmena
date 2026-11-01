@@ -160,13 +160,15 @@ async def allocate_order(order_id):
         return
     except Exception:
         with Session.begin() as db:
-            db.execute(
+            changed = db.execute(
                 update(Order)
                 .where(Order.id == order_id, Order.status == "allocating")
                 .values(
                     status="review", error="Неопределённый результат покупки; нужна сверка", updated_at=now()
                 )
-            )
+            ).rowcount
+            if changed:
+                notify_admins_review(db, [order_id])
         return
     with Session.begin() as db:
         order = db.scalar(select(Order).where(Order.id == order_id).with_for_update())
@@ -330,11 +332,44 @@ def credit_payment(payment_id, transaction_hash=None):
         return True
 
 
+def notify_admins_review(db, order_ids):
+    """Tell every admin who has opened the bot that an order needs reconciliation."""
+    from app.config import settings
+
+    admins = [admin_id for admin_id in settings.admin_id_set if db.get(User, admin_id)]
+    for order_id in order_ids:
+        order = db.get(Order, order_id)
+        for admin_id in admins:
+            db.add(
+                Notice(
+                    user_id=admin_id,
+                    event=f"review-admin:{order_id}:{admin_id}",
+                    text=(
+                        f"❗️ <b>Заказ на проверке</b>\n\n"
+                        f"🔴 Заказ: <code>{order.id[:8]}</code> · ${display(order.price)}\n"
+                        f"🔴 Клиент: <code>{order.user_id}</code>\n"
+                        f"🔴 Причина: {escape(order.error or 'неопределённый результат покупки')}\n\n"
+                        "💡 Сверьте с кабинетом api.cc: если номер не выдан — верните деньги."
+                    ),
+                )
+            )
+
+
 def recover_stale_orders():
     with Session.begin() as db:
         # A crashed allocation may already have charged the supplier: manual reconciliation only.
-        db.execute(
+        stale = db.scalars(
+            select(Order.id).where(Order.status == "allocating", Order.updated_at < now() - 120)
+        ).all()
+        if not stale:
+            return
+        changed = db.execute(
             update(Order)
-            .where(Order.status == "allocating", Order.updated_at < now() - 120)
+            .where(Order.id.in_(stale), Order.status == "allocating")
             .values(status="review", error="Процесс прерван во время покупки; нужна сверка")
-        )
+        ).rowcount
+        if changed:
+            db.flush()
+            notify_admins_review(
+                db, db.scalars(select(Order.id).where(Order.id.in_(stale), Order.status == "review")).all()
+            )

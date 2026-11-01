@@ -77,6 +77,8 @@ def notice_buttons(event, text):
         return rows + [[("Открыть номер", "card:" + order_id)]]
     if kind in ("allocated", "review-attached", "review-renewed", "sms-count"):
         return [[("Открыть номер", "card:" + order_id)]]
+    if kind == "review-admin":
+        return [[("Открыть заказ", "adm:o:" + order_id, "cancel")]]
     if kind in ("payment", "admin"):
         return [[("Купить номер", "catalog:0", "catalog")]]
     if kind == "refund":
