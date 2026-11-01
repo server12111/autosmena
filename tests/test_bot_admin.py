@@ -184,3 +184,18 @@ async def test_admin_sets_currency_from_the_bot(admin, monkeypatch):
     await bot_admin.admin_input(good, state)
     assert preferences.supplier_pricing() == {"currency": "CNY", "usd_rate": "0.14"}
     assert "Валюта сохранена" in good.answer.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_admin_renames_product(admin):
+    state = FakeState()
+    await bot_admin.admin_callback(click("adm:ask:name:1"), state)
+    message = typed("  Telegram   США  ")
+    await bot_admin.admin_input(message, state)
+    assert "Telegram США" in message.answer.call_args.args[0]
+    with admin() as db:
+        assert db.get(Product, 1).name == "Telegram США"
+    await bot_admin.admin_callback(click("adm:ask:name:1"), state)
+    too_long = typed("x" * 200)
+    await bot_admin.admin_input(too_long, state)
+    assert "128" in too_long.answer.call_args.args[0]

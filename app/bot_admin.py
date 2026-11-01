@@ -158,6 +158,7 @@ async def product(message, product_id, edit=False):
                 ("Цена $", f"adm:ask:price:{p.id}", "money", ""),
                 ("Наценка %", f"adm:ask:markup:{p.id}", "stats"),
             ],
+            [("Название", f"adm:ask:name:{p.id}", "copy")],
             [("Товары", "adm:products", "price", ""), BACK],
         ],
         edit,
@@ -183,6 +184,23 @@ async def toggle(product_id, admin_id):
             Audit(
                 action="bot.product.toggle",
                 detail=f"product={product_id}; enabled={enable}; admin={admin_id}",
+            )
+        )
+
+
+def rename(product_id, text, admin_id):
+    name = " ".join(text.split())
+    if not 1 <= len(name) <= 128:
+        raise ValueError("Название — от 1 до 128 символов")
+    with Session.begin() as db:
+        p = db.get(Product, product_id)
+        if not p or not permitted_code(p.supplier_code):
+            raise ValueError("Товар не найден")
+        before, p.name = p.name, name
+        db.add(
+            Audit(
+                action="bot.product.rename",
+                detail=f"product={product_id}; before={before}; after={name}; admin={admin_id}",
             )
         )
 
@@ -452,6 +470,10 @@ def refund(order_id, admin_id):
 PROMPTS = {
     "price": "Отправьте цену в долларах, например <code>0.45</code>. «авто» — вернуть расчёт по наценке.",
     "markup": "Отправьте наценку в процентах, например <code>30</code>.",
+    "name": (
+        "Отправьте новое название товара, например <code>Telegram США</code>.\n\n"
+        "🔴 Повторный импорт каталога его не перезапишет."
+    ),
     "credit": "Сколько начислить? Например <code>5</code> или <code>2.50</code>.",
     "debit": "Сколько списать? Например <code>1</code>.",
     "currency": (
@@ -501,7 +523,7 @@ async def admin_callback(query: CallbackQuery, state: FSMContext):
             back = (
                 "Отмена",
                 f"adm:p:{target}"
-                if kind in ("price", "markup")
+                if kind in ("price", "markup", "name")
                 else "adm:subs"
                 if kind == "channel"
                 else "adm:setup"
@@ -601,6 +623,10 @@ async def admin_input(message: Message, state: FSMContext):
             user_id = find_user(text)
             await state.set_state(None)
             await user_card(message, user_id)
+        elif kind == "name":
+            rename(int(target), text, message.from_user.id)
+            await state.set_state(None)
+            await product(message, int(target))
         elif kind in ("price", "markup"):
             set_price(int(target), kind, text, message.from_user.id)
             await state.set_state(None)
