@@ -7,6 +7,8 @@ from app import bot, subscription
 from app.config import settings
 from app.models import User
 
+REAL_MEMBER_STATUS = subscription.member_status
+
 
 @pytest.fixture
 def channel(database, monkeypatch):
@@ -17,8 +19,27 @@ def channel(database, monkeypatch):
     return database
 
 
+class FakeTelegram:
+    """Stands in for the raw getChatMember call; status=None means Telegram refused."""
+
+    def __init__(self, status):
+        self.status = status
+        self.calls = 0
+
+
 def telegram(status):
-    return SimpleNamespace(get_chat_member=AsyncMock(return_value=SimpleNamespace(status=status)))
+    return FakeTelegram(status)
+
+
+@pytest.fixture(autouse=True)
+def raw_status(monkeypatch):
+    async def fake(bot, chat_id, user_id):
+        bot.calls += 1
+        if isinstance(bot.status, Exception):
+            raise bot.status
+        return bot.status
+
+    monkeypatch.setattr(subscription, "member_status", fake)
 
 
 def message(text, user=123, chat="private"):
@@ -59,8 +80,8 @@ async def test_subscribed_user_and_admin_pass(channel):
 
 @pytest.mark.asyncio
 async def test_unreachable_channel_does_not_lock_everyone_out(channel):
-    tg = SimpleNamespace(get_chat_member=AsyncMock(side_effect=RuntimeError("bot removed")))
-    assert await subscription.missing(tg, 123) == []
+    assert await subscription.missing(telegram(RuntimeError("network")), 123) == []
+    assert await subscription.missing(telegram(None), 123) == []  # bot removed from the channel
 
 
 @pytest.mark.asyncio
@@ -78,7 +99,7 @@ async def test_check_button_rechecks_without_cache(channel):
     object.__setattr__(query, "answer", AsyncMock())
     await bot.SubscriptionGate()(AsyncMock(), query, {"bot": tg})
     assert query.answer.call_args.kwargs.get("show_alert")
-    tg.get_chat_member.return_value = SimpleNamespace(status="member")
+    tg.status = "member"
     await bot.SubscriptionGate()(AsyncMock(), query, {"bot": tg})
     assert "SMENA" in query.message.edit_text.call_args.args[0]
 
@@ -86,14 +107,12 @@ async def test_check_button_rechecks_without_cache(channel):
 @pytest.mark.asyncio
 async def test_admin_adds_channel_only_when_bot_is_admin(channel):
     chat = SimpleNamespace(id=-1002, title="Promo", username="promo", invite_link=None)
-    tg = SimpleNamespace(
-        get_chat=AsyncMock(return_value=chat),
-        me=AsyncMock(return_value=SimpleNamespace(id=1)),
-        get_chat_member=AsyncMock(return_value=SimpleNamespace(status="member")),
-    )
+    tg = telegram("member")
+    tg.get_chat = AsyncMock(return_value=chat)
+    tg.me = AsyncMock(return_value=SimpleNamespace(id=1))
     with pytest.raises(ValueError, match="администратором"):
         await subscription.add(tg, "https://t.me/promo", 777)
-    tg.get_chat_member.return_value = SimpleNamespace(status="administrator")
+    tg.status = "administrator"
     added = await subscription.add(tg, "@promo", 777)
     assert added == {"id": -1002, "title": "Promo", "url": "https://t.me/promo"}
     assert [c["id"] for c in subscription.channels()] == [-1001, -1002]
@@ -113,3 +132,45 @@ async def test_gate_never_answers_in_groups(channel):
     await bot.SubscriptionGate()(handler, event, {"bot": telegram("left")})
     event.answer.assert_not_awaited()
     handler.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_raw_status_reads_admin_answer_that_aiogram_models_reject(monkeypatch):
+    """Telegram's answer for a channel admin lacks a field aiogram 3.31 requires."""
+    answer = {
+        "ok": True,
+        "result": {
+            "status": "administrator",
+            "user": {"id": 1, "is_bot": True, "first_name": "b"},
+            "can_be_edited": False,
+            "can_manage_chat": True,
+            "can_post_messages": True,
+        },
+    }
+
+    class Response:
+        def json(self):
+            return answer
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json):
+            assert url.endswith("/getChatMember") and json == {"chat_id": -1001, "user_id": 1}
+            return Response()
+
+    monkeypatch.setattr(subscription.httpx, "AsyncClient", Client)
+    real = SimpleNamespace(member_status=REAL_MEMBER_STATUS)
+    assert await real.member_status(SimpleNamespace(token="t"), -1001, 1) == "administrator"
+    answer["result"] = {"status": "restricted", "is_member": True, "user": answer["result"]["user"]}
+    assert await real.member_status(SimpleNamespace(token="t"), -1001, 1) == "member"
+    answer.clear()
+    answer.update({"ok": False, "description": "Bad Request: member list is inaccessible"})
+    assert await real.member_status(SimpleNamespace(token="t"), -1001, 1) is None
