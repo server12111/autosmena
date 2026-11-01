@@ -1,9 +1,14 @@
+import logging
 from typing import Literal
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.storage import database_url, hosted
+
+# Request URLs can contain Telegram tokens or private SMS reception tokens.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 class Settings(BaseSettings):

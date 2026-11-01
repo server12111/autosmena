@@ -1,4 +1,5 @@
 import json
+from hashlib import sha256
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -66,7 +67,7 @@ def reserve_order(user_id, product_id, request_key, expected_price, parent_id=No
                     raise ValueError("Ключ заказа уже использован")
                 return existing
             if not supplier.ready:
-                raise ValueError("Покупки временно отключены: ожидается подключение api.cc")
+                raise ValueError("Покупки временно недоступны")
             product = db.get(Product, product_id)
             if not product or not product.enabled:
                 raise ValueError("Товар недоступен")
@@ -225,12 +226,26 @@ async def refresh_order(order_id, user_id=None, cancel=False):
             count = int(state.payload.get("sms_count", 0))
             state.payload["_seen_sms_count"] = max(seen_count, count)
             order.supplier_payload = json.dumps(state.payload, ensure_ascii=False, default=str)
-            if count > seen_count:
+            if state.sms:
+                signature = sha256(
+                    json.dumps([state.payload.get("_sms_code_time", ""), state.sms]).encode()
+                ).hexdigest()[:32]
+                event = f"sms:{order.id}:{signature}"
+                if not db.scalar(select(Notice.id).where(Notice.event == event)):
+                    order.sms = state.sms
+                    db.add(
+                        Notice(
+                            user_id=order.user_id,
+                            event=event,
+                            text=f"Код Telegram для {order.phone}:\n{state.sms}",
+                        )
+                    )
+            elif count > seen_count:
                 db.add(
                     Notice(
                         user_id=order.user_id,
                         event=f"sms-count:{order.id}:{count}",
-                        text=f"Новые SMS для {order.phone}. Всего: {count}. Откройте ссылку приёма в /orders.",
+                        text=f"Новые SMS для {order.phone}. Всего: {count}. Код появится в этом чате после обработки.",
                     )
                 )
 

@@ -103,7 +103,9 @@ async def test_real_expiry_does_not_mean_refund(supplier, monkeypatch):
         return {"list": [{"tel": "+123", "status": 2, "sms_count": 0}]}
 
     monkeypatch.setattr(supplier, "call", call)
-    state = await supplier.status(SimpleNamespace(supplier_id="supplier-order", phone="+123"))
+    state = await supplier.status(
+        SimpleNamespace(supplier_id="supplier-order", phone="+123", supplier_payload="{}")
+    )
     assert state.status == "expired"
     with pytest.raises(ValueError):
         await supplier.cancel(None)

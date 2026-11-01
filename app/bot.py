@@ -125,20 +125,10 @@ async def orders(message, user_id, offset=0, order_id=None):
     if not rows:
         await message.answer("Заказов пока нет.", reply_markup=menu())
     for order in rows[:10]:
-        buttons = [[("Проверить", "order:" + order.id)]]
+        buttons = [[("Проверить SMS", "order:" + order.id)]]
         if order.status == "waiting" and getattr(supplier, "can_cancel", False):
             buttons.append([("Отменить заказ", "cancelask:" + order.id)])
         payload = json.loads(order.supplier_payload)
-        url = payload.get("api", "")
-        from urllib.parse import urlsplit
-
-        parsed = urlsplit(url)
-        if (
-            parsed.scheme == "https"
-            and parsed.hostname
-            and (parsed.hostname in ("api.cc", "api.sms8.net") or parsed.hostname.endswith(".api.cc"))
-        ):
-            buttons.insert(0, [("Открыть приём SMS", url)])
         if order.status in ("active", "expired") and not order.parent_id and not archive[order.id]:
             buttons.append([("Продлить номер", "renew:" + order.id)])
         extra = ""
@@ -146,7 +136,8 @@ async def orders(message, user_id, offset=0, order_id=None):
             extra = f"\nДействует до: {payload.get('end_time', '—')}\nSMS: {payload.get('sms_count', 0)}"
         await message.answer(
             f"{'Архивный заказ' if archive[order.id] else 'Telegram · США'}\n{order.phone}\nЗаказ {order.id[:8]} · {STATUS_LABELS.get(order.status, order.status)}\n"
-            f"${display(order.price)}{extra}\n{order.sms or order.error}",
+            f"${display(order.price)}{extra}\n"
+            f"{('Код Telegram: ' + order.sms) if order.sms else order.error or 'Ожидаем SMS. Код придёт в этот чат автоматически.'}",
             reply_markup=keyboard(buttons),
         )
     navigation = []
@@ -301,8 +292,7 @@ async def callback(query: CallbackQuery, state: FSMContext):
                 **{"renew_" + token: {"product_id": product.id, "parent_id": parent_id, "price": price}}
             )
             await message.answer(
-                f"Продлить {parent.phone}\nЦена: ${display(price)}\n"
-                "Стандартный срок поставщика: для обычных номеров США — 1 месяц, для Великобритании, Австралии и Гонконга — 3 месяца, для годовых — 12 месяцев.",
+                f"Продлить {parent.phone}\nЦена: ${display(price)}\nПродление номера США — на 1 месяц.",
                 reply_markup=keyboard(
                     [[("Подтвердить продление", "renewbuy:" + token)], [("Мои заказы", "orders")]]
                 ),

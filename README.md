@@ -68,6 +68,6 @@ npm test
 .venv/Scripts/python.exe -m app.cli check-ledger
 ```
 
-[Отчёт об исправлениях](docs/REVIEW.md). Реальная покупка api.cc, платежи и запуск на вашем Bothost ещё требуют проверки с вашими аккаунтами. Основной проверенный путь хранения — SQLite.
+[Отчёт об исправлениях](docs/REVIEW.md). Реальная покупка проверена локально. Коды SMS бот получает на сервере и отправляет в чат автоматически, ссылки приёма клиенту не показываются. Платежи и запуск на вашем Bothost ещё требуют проверки с вашими аккаунтами. Основной проверенный путь хранения — SQLite.
 
 Источники: [хранилище Bothost](https://bothost.ru/docs/database-storage), [точка входа](https://bothost.ru/docs/main-file-entrypoint), [Crypto Pay](https://help.send.tg/en/articles/10279948-crypto-pay-api), [xRocket](https://pay.xrocket.tg/api/), [TON Center](https://docs.ton.org/api/v3/blockchain-data/get-transactions). Схема api.cc — `docs/apicc.openapi.json`.

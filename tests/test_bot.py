@@ -10,15 +10,15 @@ from app.models import Order
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "url,allowed",
+    "url",
     [
-        ("https://api.sms8.net/api/record?token=test", True),
-        ("https://api.cc/api/record?token=test", True),
-        ("https://api.sms8.net.evil.example/api/record?token=test", False),
-        ("http://api.sms8.net/api/record?token=test", False),
+        "https://api.sms8.net/api/record?token=test",
+        "https://api.cc/api/record?token=test",
+        "https://api.sms8.net.evil.example/api/record?token=test",
+        "http://api.sms8.net/api/record?token=test",
     ],
 )
-async def test_supplier_reception_link_is_available_only_for_trusted_https_hosts(database, url, allowed):
+async def test_supplier_reception_links_never_appear_in_customer_messages(database, url):
     with database.begin() as db:
         db.add(
             Order(
@@ -36,7 +36,9 @@ async def test_supplier_reception_link_is_available_only_for_trusted_https_hosts
     await bot.orders(message, 123)
     markup = message.answer.call_args_list[0].kwargs["reply_markup"]
     urls = [button.url for row in markup.inline_keyboard for button in row if button.url]
-    assert (url in urls) is allowed
+    assert not urls
+    assert url not in message.answer.call_args_list[0].args[0]
+    assert "Код придёт в этот чат" in message.answer.call_args_list[0].args[0]
 
 
 @pytest.mark.asyncio

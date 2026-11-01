@@ -5,9 +5,11 @@ Any ambiguous result is held for reconciliation instead of retried.
 """
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from decimal import ROUND_UP, Decimal
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -16,7 +18,7 @@ from app.config import settings
 from app.preferences import supplier_rate
 
 RENTAL_EXPIRY = 5  # UI: "Більше 60 днів"; OpenAPI: 60–80 days remaining.
-RENTAL_LABEL = "Больше 60 дней (диапазон поставщика 60–80)"
+RENTAL_LABEL = "Больше 60 дней"
 
 
 class Rejected(Exception):
@@ -66,7 +68,7 @@ class ApiccSupplier:
 
     async def call(self, path, body=None):
         if not settings.apicc_api_key:
-            raise ValueError("Укажите APICC_API_KEY в .env")
+            raise ValueError("Сервис временно недоступен")
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.request(
                 "GET" if body is None else "POST",
@@ -78,7 +80,7 @@ class ApiccSupplier:
             result = json.loads(response.text, parse_float=Decimal)
         if result.get("code") != 1:
             # A business failure on a charged operation is held for review. No inferred refund.
-            raise ValueError("api.cc отклонил запрос (code=" + str(result.get("code")) + ")")
+            raise ValueError("Не удалось выполнить запрос. Повторите проверку позже")
         return result["data"]
 
     async def catalog(self, category, card_type=1):
@@ -136,12 +138,49 @@ class ApiccSupplier:
         data = await self.call("/api/v1/order/api", {"ordernum": order.supplier_id})
         item = next(p for p in data["list"] if p["tel"] == order.phone)
         if int(item["status"]) not in (0, 2):
-            raise ValueError("Неизвестный статус номера api.cc")
+            raise ValueError("Не удалось проверить состояние номера")
         status = "expired" if int(item["status"]) == 2 else "active"
-        return State(status, payload=item)
+        previous = json.loads(order.supplier_payload)
+        url = item.get("api") or previous.get("api")
+        sms = ""
+        if status == "active" and url:
+            sms, code_time = await self.receive_sms(url)
+            item["api"] = url
+            item["_sms_code_time"] = code_time
+        return State(status, sms=sms, payload=item)
+
+    async def receive_sms(self, url):
+        # These links contain private bearer tokens. Never expose them to customers,
+        # attach account Authorization headers, or follow redirects to another host.
+        parsed = urlsplit(url)
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname not in {"api.cc", "api.sms8.net"}
+            or parsed.port not in (None, 443)
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path != "/api/record"
+            or parsed.fragment
+        ):
+            raise ValueError("Не удалось проверить входящие SMS")
+        async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            if response.is_redirect:
+                raise ValueError("Не удалось проверить входящие SMS")
+            result = response.json()
+        data = result.get("data")
+        if not isinstance(data, dict):
+            raise ValueError("Не удалось проверить входящие SMS")
+        code = data.get("code")
+        if result.get("code") == 0 and code in ("", None):
+            return "", ""
+        if result.get("code") != 1 or isinstance(code, bool) or not re.fullmatch(r"[0-9]{3,12}", str(code)):
+            raise ValueError("Не удалось проверить входящие SMS")
+        return str(code), str(data.get("code_time") or "")[:128]
 
     async def cancel(self, order):
-        raise ValueError("В API api.cc нет отмены аренды. Обратитесь в поддержку")
+        raise ValueError("Отмена этой аренды недоступна. Обратитесь в поддержку")
 
     async def renew(self, code, order):
         if not permitted_code(code):
