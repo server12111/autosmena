@@ -1,6 +1,7 @@
 """Persistent storage without requiring a database environment variable."""
 
 import json
+import logging
 import os
 import secrets
 import sqlite3
@@ -154,22 +155,40 @@ def prepare_database(url, configured=""):
 
 
 def admin_password(directory, configured=""):
-    from app.security import password_hash
+    from app.security import password_hash, verify_password
 
     directory.mkdir(parents=True, exist_ok=True)
     record = directory / "admin-auth.json"
     access = directory / "admin-access.txt"
     with file_lock(directory / ".admin.lock"):
-        saved = json.loads(record.read_text(encoding="utf-8")) if record.exists() else {}
-        if configured and saved.get("hash") != configured:
+        try:
+            saved = json.loads(record.read_text(encoding="utf-8")) if record.exists() else {}
+            if not isinstance(saved, dict):
+                raise ValueError
+        except ValueError:
+            saved = {}
+        if configured and not configured.startswith("scrypt:"):
+            # ADMIN_PASSWORD_HASH holds a plain password: accept it instead of refusing to start.
+            if not (
+                str(saved.get("hash", "")).startswith("scrypt:")
+                and verify_password(configured, saved["hash"])
+            ):
+                saved = {"hash": password_hash(configured)}
+                if access.exists():
+                    access.unlink()
+        elif configured and saved.get("hash") != configured:
             saved = {"hash": configured}
             if access.exists():
                 access.unlink()
+        if saved and not str(saved.get("hash", "")).startswith("scrypt:"):
+            # Damaged login record (e.g. a copied data folder): issue a new password, keep the shop running.
+            logging.getLogger("smena.storage").warning(
+                "Admin login record was damaged; a new password was issued"
+            )
+            saved = {}
         if not saved:
             password = secrets.token_urlsafe(24)
             saved = {"hash": password_hash(password), "password": password}
-        if not str(saved.get("hash", "")).startswith("scrypt:"):
-            raise ValueError("Повреждены сохранённые данные входа в админку")
         temporary = directory / ("admin-auth-" + secrets.token_hex(6) + ".tmp")
         try:
             with temporary.open("x", encoding="utf-8") as output:
