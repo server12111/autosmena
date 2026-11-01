@@ -21,8 +21,13 @@ def telegram(status):
     return SimpleNamespace(get_chat_member=AsyncMock(return_value=SimpleNamespace(status=status)))
 
 
-def message(text, user=123):
-    return SimpleNamespace(text=text, from_user=SimpleNamespace(id=user, username="u"), answer=AsyncMock())
+def message(text, user=123, chat="private"):
+    return SimpleNamespace(
+        text=text,
+        from_user=SimpleNamespace(id=user, username="u"),
+        answer=AsyncMock(),
+        chat=SimpleNamespace(type=chat),
+    )
 
 
 @pytest.mark.asyncio
@@ -31,7 +36,11 @@ async def test_unsubscribed_user_sees_gate_and_handler_does_not_run(channel):
     gate = bot.SubscriptionGate()
     from aiogram.types import Message
 
-    real = Message.model_construct(text="/start ref_123", from_user=SimpleNamespace(id=900, username="new"))
+    real = Message.model_construct(
+        text="/start ref_123",
+        from_user=SimpleNamespace(id=900, username="new"),
+        chat=SimpleNamespace(type="private"),
+    )
     object.__setattr__(real, "answer", AsyncMock())
     await gate(handler, real, {"bot": telegram("left")})
     handler.assert_not_awaited()
@@ -62,7 +71,9 @@ async def test_check_button_rechecks_without_cache(channel):
     query = CallbackQuery.model_construct(
         data="subcheck",
         from_user=SimpleNamespace(id=123, username="u"),
-        message=SimpleNamespace(answer=AsyncMock(), edit_text=AsyncMock()),
+        message=SimpleNamespace(
+            answer=AsyncMock(), edit_text=AsyncMock(), chat=SimpleNamespace(type="private")
+        ),
     )
     object.__setattr__(query, "answer", AsyncMock())
     await bot.SubscriptionGate()(AsyncMock(), query, {"bot": tg})
@@ -88,3 +99,17 @@ async def test_admin_adds_channel_only_when_bot_is_admin(channel):
     assert [c["id"] for c in subscription.channels()] == [-1001, -1002]
     subscription.remove(-1001, 777)
     assert [c["id"] for c in subscription.channels()] == [-1002]
+
+
+@pytest.mark.asyncio
+async def test_gate_never_answers_in_groups(channel):
+    from aiogram.types import Message
+
+    event = Message.model_construct(
+        text="hi", from_user=SimpleNamespace(id=900, username="x"), chat=SimpleNamespace(type="supergroup")
+    )
+    object.__setattr__(event, "answer", AsyncMock())
+    handler = AsyncMock()
+    await bot.SubscriptionGate()(handler, event, {"bot": telegram("left")})
+    event.answer.assert_not_awaited()
+    handler.assert_awaited_once()

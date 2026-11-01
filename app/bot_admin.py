@@ -17,7 +17,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy import func, select, update
 
 from app import subscription
-from app.bot_ui import STATUS_LABELS, format_phone, icon, show, status_icon
+from app.bot_ui import STATUS_LABELS, format_phone, icon, show, status_icon, user_error
 from app.catalog_policy import allowed_codes, permitted_code
 from app.config import settings
 from app.db import Session
@@ -467,7 +467,7 @@ async def admin_callback(query: CallbackQuery, state: FSMContext):
         else:
             await home(message, edit=True)
     except ValueError as exc:
-        await show(message, f"{icon('cancel')} " + escape(str(exc)), [[BACK]])
+        await show(message, f"{icon('cancel')} " + escape(user_error(exc)), [[BACK]])
     except Exception as exc:
         log.warning("Admin action failed: action=%s type=%s", action, type(exc).__name__)
         await show(message, f"{icon('cancel')} Не получилось: {escape(type(exc).__name__)}", [[BACK]])

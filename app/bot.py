@@ -34,6 +34,7 @@ from app.bot_ui import (
     load_icons,
     show,
     status_icon,
+    user_error,
 )
 from app.catalog_policy import allowed_codes, permitted_code
 from app.config import settings
@@ -85,7 +86,10 @@ class SubscriptionGate(BaseMiddleware):
 
     async def __call__(self, handler, event, data):
         user = event.from_user
-        if user is None or is_admin(user.id) or not subscription.channels():
+        chat = getattr(event, "chat", None) or getattr(getattr(event, "message", None), "chat", None)
+        # Outer middleware runs before the router's private-chat filter: never answer in groups.
+        private = chat is None or chat.type == ChatType.PRIVATE
+        if user is None or not private or is_admin(user.id) or not subscription.channels():
             return await handler(event, data)
         bot_instance = data["bot"]
         if isinstance(event, CallbackQuery) and event.data == "subcheck":
@@ -816,7 +820,7 @@ async def callback(query: CallbackQuery, state: FSMContext):
         else:
             await send_menu(message, user_id, edit=True)
     except ValueError as exc:
-        await error_screen(message, str(exc))
+        await error_screen(message, user_error(exc))
     except Exception as exc:
         logging.getLogger("smena.bot").warning("Action failed: action=%s type=%s", action, type(exc).__name__)
         await error_screen(
