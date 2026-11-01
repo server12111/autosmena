@@ -199,3 +199,15 @@ async def test_admin_renames_product(admin):
     too_long = typed("x" * 200)
     await bot_admin.admin_input(too_long, state)
     assert "128" in too_long.answer.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_product_card_buttons_are_actions_not_copy_buttons(admin):
+    query = click("adm:p:1")
+    await bot_admin.admin_callback(query, FakeState())
+    markup = query.message.edit_text.call_args.kwargs["reply_markup"]
+    for row in markup.inline_keyboard:
+        for button in row:
+            assert button.copy_text is None, button.text
+            assert button.callback_data and button.callback_data.startswith("adm:"), button.text
+    assert any(b.callback_data == "adm:ask:name:1" for r in markup.inline_keyboard for b in r)
