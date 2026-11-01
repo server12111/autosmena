@@ -102,6 +102,23 @@ async def test_crypto_webhook_is_durable_and_repeated_event_credits_once(live, m
     api.assert_awaited_once()
 
 
+def test_crypto_update_id_collision_does_not_drop_another_invoice(live):
+    with TestClient(app) as client:
+        for invoice_id in (101, 102, 101):
+            raw = json.dumps(
+                {"update_id": 1, "update_type": "invoice_paid", "payload": {"invoice_id": invoice_id}}
+            ).encode()
+            assert (
+                client.post(
+                    "/webhooks/cryptopay", content=raw, headers=signed(raw, settings.cryptopay_token)
+                ).status_code
+                == 200
+            )
+    with live() as db:
+        rows = db.scalars(select(WebhookEvent)).all()
+        assert sorted(json.loads(row.payload)["external_id"] for row in rows) == ["101", "102"]
+
+
 @pytest.mark.asyncio
 async def test_xrocket_legacy_event_only_triggers_independent_verification(live, monkeypatch):
     with live.begin() as db:

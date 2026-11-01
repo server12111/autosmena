@@ -461,7 +461,9 @@ async def crypto_webhook(request: Request):
         payload = data.get("payload")
         if not isinstance(payload, dict) or not isinstance(payload.get("invoice_id"), (int, str)):
             raise HTTPException(400)
-        key = str(data.get("update_id") or digest(raw.hex()))
+        # Crypto Pay documents update_id as non-unique. Each paid invoice is
+        # one business event, even if its update ID collides with another invoice.
+        key = "invoice_paid:" + str(payload["invoice_id"])
         webhooks.enqueue("cryptopay", digest(key), {"external_id": str(payload["invoice_id"])})
     return {"ok": True}
 
