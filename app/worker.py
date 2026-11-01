@@ -95,7 +95,11 @@ async def deliver(bot, notice):
         if "parse" not in str(error).lower() and "entit" not in str(error).lower():
             raise
         # Old queued notices may predate HTML formatting.
-        await bot.send_message(notice.user_id, re.sub(r"</?\w+>", "", notice.text), reply_markup=markup)
+        await bot.send_message(
+            notice.user_id,
+            unescape(re.sub(r"</?[a-zA-Z][\w-]*(?:\s[^>]*)?>", "", notice.text)),
+            reply_markup=markup,
+        )
 
 
 async def run():

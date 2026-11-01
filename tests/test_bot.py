@@ -287,3 +287,24 @@ async def test_screens_show_their_banner_as_large_preview_above_text(database, m
         await bot.callback(event, FakeState())
         assert f"/{name}.png" in event.message.edit_text.call_args.kwargs["link_preview_options"].url, data
     bot.banner.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_out_of_stock_refund_shown_on_card_without_duplicate_message(database, monkeypatch):
+    from app import services
+    from app.models import Notice, User
+    from app.supplier import Rejected
+
+    async def no_stock(code, request_id):
+        raise Rejected("Нет номеров в наличии")
+
+    monkeypatch.setattr(services, "supplier", SimpleNamespace(ready=True, allocate=no_stock))
+    with database.begin() as db:
+        db.get(User, 123).balance = 2_000_000
+    bot.last_action.clear()
+    event = query("buy:1:1000000:tok-refund")
+    await bot.callback(event, FakeState())
+    assert "возвращены на баланс" in event.message.edit_text.call_args.args[0]
+    with database() as db:
+        assert db.get(User, 123).balance == 2_000_000
+        assert all(n.sent for n in db.query(Notice).all())
