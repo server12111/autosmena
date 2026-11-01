@@ -265,3 +265,10 @@ def format_date(value):
     """Supplier dates look like 2027-01-26 12:00:00; customers read 26.01.2027."""
     match = re.match(r"(\d{4})-(\d{2})-(\d{2})", str(value or ""))
     return f"{match[3]}.{match[2]}.{match[1]}" if match else str(value or "")
+
+
+def user_error(exc):
+    """Our own errors are written in Russian; anything else (int(), unpacking) is a stale or
+    malformed button, and Python's message must not reach the customer."""
+    text = str(exc)
+    return text if re.search("[А-Яа-яЁё]", text) else "Кнопка устарела. Откройте меню заново."

@@ -16,7 +16,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import func, select, update
 
-from app.bot_ui import STATUS_LABELS, format_phone, icon, show, status_icon
+from app import subscription
+from app.bot_ui import STATUS_LABELS, format_phone, icon, show, status_icon, user_error
 from app.catalog_policy import allowed_codes, permitted_code
 from app.config import settings
 from app.db import Session
@@ -92,6 +93,7 @@ async def home(message, edit=False):
         + (f"\n\n{icon('cancel')} Заказов на проверке: <b>{review}</b>" if review else ""),
         [
             [("Товары и цены", "adm:products", "price"), ("Пользователь", "adm:find", "user")],
+            [("Обязательная подписка", "adm:subs", "send")],
             [(f"На проверке · {review}", "adm:review", "cancel", "")] if review else [],
             [("Обновить", "adm:home", "refresh"), ("Меню", "home")],
         ],
@@ -279,6 +281,27 @@ def change_balance(user_id, kind, text, admin_id, request_id):
                 )
 
 
+async def subs_screen(message, edit=False):
+    items = subscription.channels()
+    if items:
+        listing = "\n".join(f"🔴 {escape(item['title'])}" for item in items)
+        text = (
+            "📣 <b>Обязательная подписка</b>\n\n"
+            "Пользоваться ботом можно только после подписки на эти каналы:\n\n"
+            f"{listing}\n\n"
+            "💡 Админы проверку не проходят. Удалить канал — нажмите на него."
+        )
+    else:
+        text = (
+            "📣 <b>Обязательная подписка</b>\n\n"
+            "Сейчас выключена — ботом может пользоваться любой.\n\n"
+            "💡 Добавьте канал, и бот попросит подписаться перед покупкой."
+        )
+    rows = [[(f"Удалить: {item['title'][:30]}", f"adm:subdel:{item['id']}", "cancel")] for item in items]
+    rows.append([("Добавить канал", "adm:ask:channel:0", "confirm")])
+    await show(message, text, rows + [[BACK]], edit)
+
+
 async def review_list(message, edit=False):
     with Session() as db:
         rows = db.scalars(
@@ -342,6 +365,10 @@ PROMPTS = {
     "markup": "Отправьте наценку в процентах, например <code>30</code>.",
     "credit": "Сколько начислить? Например <code>5</code> или <code>2.50</code>.",
     "debit": "Сколько списать? Например <code>1</code>.",
+    "channel": (
+        "Отправьте @username канала, ссылку t.me/… или ID вида <code>-100…</code>.\n\n"
+        "🔴 Сначала добавьте бота в канал администратором — иначе он не увидит подписчиков."
+    ),
 }
 
 
@@ -379,7 +406,11 @@ async def admin_callback(query: CallbackQuery, state: FSMContext):
             await state.update_data(admin_kind=kind, admin_target=target, admin_request=secrets.token_hex(12))
             back = (
                 "Отмена",
-                f"adm:p:{target}" if kind in ("price", "markup") else f"adm:u:{target}",
+                f"adm:p:{target}"
+                if kind in ("price", "markup")
+                else "adm:subs"
+                if kind == "channel"
+                else f"adm:u:{target}",
                 "cancel",
                 "",
             )
@@ -409,6 +440,11 @@ async def admin_callback(query: CallbackQuery, state: FSMContext):
                     )
                 )
             await user_card(message, user_id, edit=True)
+        elif action == "subs":
+            await subs_screen(message, edit=True)
+        elif action == "subdel":
+            subscription.remove(int(parts[1]), admin_id)
+            await subs_screen(message, edit=True)
         elif action == "review":
             await review_list(message, edit=True)
         elif action == "o":
@@ -431,7 +467,7 @@ async def admin_callback(query: CallbackQuery, state: FSMContext):
         else:
             await home(message, edit=True)
     except ValueError as exc:
-        await show(message, f"{icon('cancel')} " + escape(str(exc)), [[BACK]])
+        await show(message, f"{icon('cancel')} " + escape(user_error(exc)), [[BACK]])
     except Exception as exc:
         log.warning("Admin action failed: action=%s type=%s", action, type(exc).__name__)
         await show(message, f"{icon('cancel')} Не получилось: {escape(type(exc).__name__)}", [[BACK]])
@@ -453,6 +489,10 @@ async def admin_input(message: Message, state: FSMContext):
             set_price(int(target), kind, text, message.from_user.id)
             await state.set_state(None)
             await product(message, int(target))
+        elif kind == "channel":
+            await subscription.add(message.bot, text, message.from_user.id)
+            await state.set_state(None)
+            await subs_screen(message)
         elif kind in ("credit", "debit"):
             change_balance(int(target), kind, text, message.from_user.id, data["admin_request"])
             await state.set_state(None)

@@ -11,7 +11,7 @@ from html import escape
 from pathlib import Path
 from urllib.parse import urlencode
 
-from aiogram import Bot, Dispatcher, F, Router
+from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.enums import ChatType
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
@@ -20,7 +20,7 @@ from aiogram.fsm.storage.memory import SimpleEventIsolation
 from aiogram.types import BotCommand, BotCommandScopeChat, CallbackQuery, Message
 from sqlalchemy import func, or_, select
 
-from app import bot_admin, webhooks
+from app import bot_admin, subscription, webhooks
 from app.bot_admin import is_admin
 from app.bot_ui import (
     PROVIDER_LABELS,
@@ -34,6 +34,7 @@ from app.bot_ui import (
     load_icons,
     show,
     status_icon,
+    user_error,
 )
 from app.catalog_policy import allowed_codes, permitted_code
 from app.config import settings
@@ -66,6 +67,58 @@ METHOD_LABELS = {
 HOME = ("Меню", "home")
 DOT = "🔴"
 BOT_USERNAME = "SmenaMarketBot"
+
+
+async def gate_screen(message, absent, edit=False):
+    rows = [[(item["title"][:40], item["url"], "send")] for item in absent]
+    await show(
+        message,
+        "📣 <b>Подпишитесь на канал</b>\n\n"
+        f"{DOT} Чтобы пользоваться ботом, подпишитесь на {'канал' if len(absent) == 1 else 'каналы'} ниже\n"
+        f"{DOT} Затем нажмите «Я подписался»",
+        rows + [[("Я подписался", "subcheck", "confirm")]],
+        edit,
+    )
+
+
+class SubscriptionGate(BaseMiddleware):
+    """Blocks the shop until the user joins every required channel (admins are exempt)."""
+
+    async def __call__(self, handler, event, data):
+        user = event.from_user
+        chat = getattr(event, "chat", None) or getattr(getattr(event, "message", None), "chat", None)
+        # Outer middleware runs before the router's private-chat filter: never answer in groups.
+        private = chat is None or chat.type == ChatType.PRIVATE
+        if user is None or not private or is_admin(user.id) or not subscription.channels():
+            return await handler(event, data)
+        bot_instance = data["bot"]
+        if isinstance(event, CallbackQuery) and event.data == "subcheck":
+            absent = await subscription.missing(bot_instance, user.id, fresh=True)
+            if absent:
+                await event.answer("Подписка не найдена. Подпишитесь и нажмите ещё раз", show_alert=True)
+                return None
+            await event.answer("Спасибо за подписку!")
+            ensure_user(user.id, user.username or "")
+            await send_menu(event.message, user.id, edit=True)
+            return None
+        absent = await subscription.missing(bot_instance, user.id)
+        if not absent:
+            return await handler(event, data)
+        if isinstance(event, Message):
+            # Keep the referral from the invite link even though the shop is closed for now.
+            args = (event.text or "").split(maxsplit=1)
+            payload = args[1] if len(args) > 1 and args[0].startswith("/start") else ""
+            referrer = int(payload[4:]) if payload.startswith("ref_") and payload[4:].isdigit() else None
+            ensure_user(user.id, user.username or "", referrer)
+            await gate_screen(event, absent)
+        else:
+            await event.answer()
+            await gate_screen(event.message, absent, edit=True)
+        return None
+
+
+router.message.outer_middleware(SubscriptionGate())
+router.callback_query.outer_middleware(SubscriptionGate())
 
 
 class Deposit(StatesGroup):
@@ -767,7 +820,7 @@ async def callback(query: CallbackQuery, state: FSMContext):
         else:
             await send_menu(message, user_id, edit=True)
     except ValueError as exc:
-        await error_screen(message, str(exc))
+        await error_screen(message, user_error(exc))
     except Exception as exc:
         logging.getLogger("smena.bot").warning("Action failed: action=%s type=%s", action, type(exc).__name__)
         await error_screen(
