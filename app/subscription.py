@@ -9,6 +9,8 @@ import json
 import logging
 import time
 
+import httpx
+
 from app import db
 from app.models import AppSetting, Audit
 
@@ -17,6 +19,25 @@ OK_STATUSES = {"creator", "administrator", "member"}
 CACHE_SECONDS = 60
 log = logging.getLogger("smena.subscription")
 _verified = {}
+
+
+async def member_status(bot, chat_id, user_id):
+    """Raw getChatMember status. aiogram's typed models reject current Telegram answers for
+    channel admins (a field the library marks required is not sent), so only the status
+    string is read here. Returns None when Telegram refuses to answer."""
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.post(
+            f"https://api.telegram.org/bot{bot.token}/getChatMember",
+            json={"chat_id": chat_id, "user_id": user_id},
+        )
+    data = response.json()
+    if not data.get("ok"):
+        log.warning("getChatMember refused: chat=%s description=%s", chat_id, data.get("description", ""))
+        return None
+    result = data["result"]
+    if result.get("status") == "restricted" and result.get("is_member"):
+        return "member"
+    return result.get("status")
 
 
 def channels():
@@ -47,10 +68,11 @@ async def add(bot, reference, admin_id):
         raise ValueError("Канал не найден. Проверьте @username и что бот добавлен в канал") from None
     try:
         me = await bot.me()
-        member = await bot.get_chat_member(chat.id, me.id)
-    except Exception:
-        member = None
-    if not member or member.status not in ("administrator", "creator"):
+        status = await member_status(bot, chat.id, me.id)
+    except Exception as exc:
+        log.warning("Bot admin check failed: chat=%s type=%s", chat.id, type(exc).__name__)
+        status = None
+    if status not in ("administrator", "creator"):
         raise ValueError("Сделайте бота администратором канала — иначе Telegram не показывает подписчиков")
     url = f"https://t.me/{chat.username}" if chat.username else chat.invite_link
     if not url:
@@ -78,11 +100,13 @@ async def missing(bot, user_id, fresh=False):
     absent = []
     for item in required:
         try:
-            member = await bot.get_chat_member(item["id"], user_id)
+            status = await member_status(bot, item["id"], user_id)
         except Exception as exc:
             log.warning("Subscription check skipped: channel=%s type=%s", item["id"], type(exc).__name__)
             continue
-        if member.status not in OK_STATUSES and not getattr(member, "is_member", False):
+        if status is None:
+            continue  # Telegram refused (bot removed from channel): fail open, logged above.
+        if status not in OK_STATUSES:
             absent.append(item)
     if absent:
         _verified.pop(user_id, None)
