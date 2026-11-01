@@ -22,5 +22,5 @@ ignore = ["B008"]
 [tool.setuptools.packages.find]
 include = ["app*"]
 [tool.setuptools.package-data]
-app = ["static/*", "static/brand/*", "static/fonts/*"]
+app = ["static/*", "static/brand/*", "static/brand/base/*", "static/fonts/*"]
 

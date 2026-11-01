@@ -37,6 +37,9 @@ PROFILE_ARGS = ("section_profile", "ПРОФИЛЬ", "Всё под<br>руко�
 .stats{margin-top:28px;display:flex;gap:14px}
 .stats div{flex:1;padding:16px 18px;border-radius:18px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);font-size:16px}
 .stats b{display:block;font-size:28px;color:#fff;font-weight:800;margin-top:4px}
+.list{margin-top:34px;display:flex;flex-direction:column;gap:12px}
+.list div{display:flex;align-items:center;padding:16px 18px;border-radius:18px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);font-size:21px;font-weight:700;color:#fff}
+.list span{margin-left:auto;font-size:16px;font-weight:600;color:#93A3C2}
 .badge{right:-10px;top:20px;padding:14px 20px;border-radius:18px;font-weight:800;font-size:20px;color:#fff}
 """, """<div class="glass card"><div class="row1"><div class="ava">S</div><div><div class="nm">@smena_user</div><div class="id muted mono">ID 7145919720</div></div></div>
 <div class="bal muted">Баланс<b>$24.60</b></div>
@@ -53,6 +56,9 @@ WALLET_ARGS = ("section_wallet", "КОШЕЛЁК", "Пополнение<br>за
 .ton svg{width:92px;height:92px}
 .pay{left:60px;top:300px;width:400px;padding:30px 32px}
 .pay .t{font-size:18px}.pay b{display:block;font-size:56px;font-weight:900;color:#fff;margin-top:6px;letter-spacing:-2px}
+.pay .m{display:flex;align-items:center;gap:12px;margin-top:14px;font-size:22px;font-weight:700;color:#fff}
+.pay .m span{margin-left:auto;font-size:17px;font-weight:600;color:#93A3C2}
+.pay .m i{width:12px;height:12px;border-radius:50%}.pay .g{background:#2FD38A}.pay .b{background:#5AC8FA}.pay .t2{background:#0098EA}
 .ok{margin-top:18px;display:inline-block;padding:10px 16px;border-radius:12px;background:rgba(52,199,89,.18);border:1px solid rgba(52,199,89,.5);color:#7CF0A0;font-weight:700;font-size:18px}
 """, """<div class="coin usdt"><svg viewBox="0 0 100 100" style="width:130px;height:130px"><rect x="22" y="22" width="56" height="13" rx="3" fill="#fff"/><rect x="43" y="22" width="14" height="58" rx="3" fill="#fff"/><ellipse cx="50" cy="47" rx="30" ry="8" fill="none" stroke="#fff" stroke-width="5"/></svg></div>
 <div class="coin ton"><svg viewBox="0 0 56 56"><path d="M17 15h22c3 0 4.8 3.2 3.3 5.8L30.4 41.7a2.8 2.8 0 0 1-4.8 0L13.7 20.8C12.2 18.2 14 15 17 15Z" fill="none" stroke="#fff" stroke-width="4" stroke-linejoin="round"/><path d="M28 15v27" stroke="#fff" stroke-width="4"/></svg></div>
@@ -109,4 +115,13 @@ names.append(section("section_main", "SMENA", "Номера Telegram<br>за м�
 <div class="btn b1">Скопировать код</div><div class="btn b2">Купить ещё</div></div>
 <div class="glass chipf" style="right:-40px;top:500px">⚡ за 10 секунд</div>
 <div class="glass chipf" style="right:-10px;top:60px">🇺🇸 +1</div>""", h1size=84))
+# Neutral cards for the static fallback: no personal data, still a full composition.
+names.append(section("neutral_wallet", *WALLET_ARGS[1:6], WALLET_ARGS[6].split('<div class="glass pay">')[0] + """
+<div class="glass pay"><div class="t muted">Способы пополнения</div>
+<div class="m"><i class="g"></i>Crypto Bot <span>USDT · TON</span></div>
+<div class="m"><i class="b"></i>xRocket <span>USDT</span></div>
+<div class="m"><i class="t2"></i>TON <span>перевод</span></div></div>""", glow="rgba(27,162,122,.22)"))
+names.append(section("neutral_profile", *PROFILE_ARGS[1:6], """
+<div class="glass card"><div class="row1"><div class="ava"><svg viewBox="0 0 24 24" width="44" height="44"><circle cx="12" cy="8.5" r="4.2" fill="#fff"/><path d="M3.8 20.5c1-4.2 4.4-6.6 8.2-6.6s7.2 2.4 8.2 6.6" fill="#fff"/></svg></div><div><div class="nm">Ваш аккаунт</div><div class="id muted">баланс, номера и бонусы</div></div></div>
+<div class="list"><div>📱 Мои номера <span>коды и продление</span></div><div>⭐️ Рефералы <span>5% с пополнений</span></div><div>📣 API <span>для реселлеров</span></div></div></div>"""))
 json.dump({n: [1280, 720] for n in names}, open('list.json', 'w'))

@@ -43,7 +43,8 @@ def font(name, size):
 
 @lru_cache(maxsize=None)
 def base(kind):
-    return Image.open(BRAND / f"{kind}.png").convert("RGBA")
+    # The plain artwork without a card; brand/<kind>.png is the neutral fallback with one.
+    return Image.open(BRAND / "base" / f"{kind}.png").convert("RGBA")
 
 
 def handle(username, user_id):
