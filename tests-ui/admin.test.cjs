@@ -20,6 +20,22 @@ async function setup() {
   return {dom,win,calls};
 }
 
+test('webhook settings show callback URLs and save to database API without new env fields',async()=>{
+  const {dom,win,calls}=await setup();
+  try {
+    await win.document.getElementById('webhooks-settings').onclick();
+    const form=win.document.getElementById('edit-form');
+    form.elements.baseUrl.value='https://shop.example.com';
+    form.elements.baseUrl.oninput();
+    assert.ok(win.document.getElementById('dialog-fields').textContent.includes('https://shop.example.com/webhooks/xrocket'));
+    form.elements.telegramEnabled.checked=true;
+    await form.onsubmit({preventDefault(){},target:form});
+    const request=calls.find(c=>c.path==='/api/webhooks' && c.method==='PUT');
+    assert.deepEqual(JSON.parse(request.body),{base_url:'https://shop.example.com',telegram_enabled:true});
+    assert.equal(request.headers['X-CSRF-Token'],'test-csrf');
+  } finally {dom.window.close();}
+});
+
 test('price form submits enabled state and exact fixed price',async()=>{
   const {dom,win,calls}=await setup();
   try {

@@ -11,9 +11,11 @@ from aiogram.enums import ChatType
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import SimpleEventIsolation
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 
+from app import webhooks
 from app.bot_ui import PROVIDER_LABELS, STATUS_LABELS, PremiumFallback, icon, keyboard, load_icons
 from app.catalog_policy import allowed_codes, permitted_code
 from app.config import settings
@@ -378,11 +380,47 @@ async def deposit_amount(message: Message, state: FSMContext):
         await message.answer(str(exc))
 
 
+async def process_telegram_event(bot, dispatcher):
+    from aiogram.types import Update
+
+    event = webhooks.claim(["telegram"])
+    if event is None:
+        return False
+    try:
+        update = Update.model_validate(json.loads(event.payload), context={"bot": bot})
+        await dispatcher.feed_update(bot, update)
+    except Exception as exc:
+        logging.getLogger("smena.bot").warning(
+            "Telegram event failed: id=%s type=%s", event.id, type(exc).__name__
+        )
+        webhooks.finish(event, failed=True)
+    else:
+        webhooks.finish(event)
+    return True
+
+
+async def configure_transport(bot, dispatcher):
+    config = webhooks.configuration()
+    if config["telegram_enabled"]:
+        await bot.set_webhook(
+            config["base_url"] + "/webhooks/telegram",
+            secret_token=webhooks.telegram_secret(),
+            allowed_updates=dispatcher.resolve_used_update_types(),
+            max_connections=1,
+            drop_pending_updates=False,
+        )
+        webhooks.set_telegram_status("webhook")
+        return True
+    await bot.delete_webhook(drop_pending_updates=False)
+    webhooks.set_telegram_status("polling")
+    return False
+
+
 async def run():
     settings.validate_runtime()
     if not settings.bot_token:
         raise SystemExit("Set BOT_TOKEN in .env")
-    bot, dispatcher = Bot(settings.bot_token), Dispatcher()
+    bot, dispatcher = Bot(settings.bot_token), Dispatcher(events_isolation=SimpleEventIsolation())
     bot.session.middleware(PremiumFallback())
     await load_icons(bot)
     dispatcher.include_router(router)
@@ -395,7 +433,24 @@ async def run():
             {"command": "cancel", "description": "Отменить ввод"},
         ]
     )
-    await dispatcher.start_polling(bot)
+
+    async def consume_webhooks():
+        while True:
+            if not await process_telegram_event(bot, dispatcher):
+                await asyncio.sleep(0.25)
+
+    consumer = None
+    try:
+        if await configure_transport(bot, dispatcher):
+            await consume_webhooks()
+        else:
+            consumer = asyncio.create_task(consume_webhooks())
+            await dispatcher.start_polling(bot, close_bot_session=False)
+    finally:
+        if consumer:
+            consumer.cancel()
+            await asyncio.gather(consumer, return_exceptions=True)
+        await bot.session.close()
 
 
 if __name__ == "__main__":

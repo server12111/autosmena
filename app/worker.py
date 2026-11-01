@@ -3,6 +3,7 @@ import logging
 
 from sqlalchemy import select
 
+from app import webhooks
 from app.config import settings
 from app.db import Session
 from app.models import Notice, Order, Payment, now
@@ -39,6 +40,10 @@ async def cycle(bot=None):
             await check_payment(payment_id)
         except Exception as exc:
             log.warning("Payment check failed: id=%s type=%s", payment_id, type(exc).__name__)
+    await send_notices(bot)
+
+
+async def send_notices(bot):
     if bot:
         with Session() as db:
             notices = db.scalars(
@@ -59,11 +64,33 @@ async def run():
     from aiogram import Bot
 
     bot = Bot(settings.bot_token) if settings.bot_token else None
-    try:
+
+    async def periodic():
         while True:
-            await cycle(bot)
+            await cycle()
             await asyncio.sleep(settings.poll_seconds)
+
+    async def webhook_events():
+        cleaned = 0
+        while True:
+            await webhooks.process_payments()
+            if now() - cleaned >= 86400:
+                webhooks.cleanup()
+                cleaned = now()
+            await asyncio.sleep(1)
+
+    async def notifications():
+        while True:
+            await send_notices(bot)
+            await asyncio.sleep(1)
+
+    tasks = [asyncio.create_task(job()) for job in (periodic, webhook_events, notifications)]
+    try:
+        await asyncio.gather(*tasks)
     finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         if bot:
             await bot.session.close()
 

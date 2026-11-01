@@ -130,13 +130,29 @@ $('supplier-currency').onclick=async()=>{
   } catch(error){toast(error.message);}
 };
 $('close-dialog').onclick=()=>$('edit-dialog').close();
+$('webhooks-settings').onclick=async()=>{
+  try {
+    const current=await api('webhooks');
+    const domain=field('HTTPS-адрес вашего бота','baseUrl','url',current.base_url || (location.protocol==='https:'?location.origin:''));
+    domain.lastChild.placeholder='https://your-bot.bothost.tech';domain.lastChild.maxLength=256;
+    const enabled=field('Принимать сообщения Telegram через вебхук','telegramEnabled','checkbox',current.telegram_enabled);
+    const info=el('p','Telegram: '+(current.telegram_status==='webhook'?'вебхук':'опрос')+'. После сохранения перезапустите бота на хостинге. На локальном компьютере оставьте переключатель выключенным.');
+    const urls=el('p');urls.style.whiteSpace='pre-wrap';
+    const updateUrls=()=>{const base=domain.lastChild.value.trim().replace(/\/$/,'');urls.textContent=base?'Crypto Bot → '+base+'/webhooks/cryptopay\nxRocket Legacy → '+base+'/webhooks/xrocket':'Укажите домен, чтобы получить адреса для платёжных приложений.';};
+    domain.lastChild.oninput=updateUrls;updateUrls();
+    const help=el('p','Эти два адреса вставьте в настройки вебхуков приложений Crypto Pay и xRocket. Ключи уже используются из настроек бота. SMS и прямой TON продолжают проверяться автоматически.');
+    const queue=el('p','Событий на проверке: '+(current.queue?.review||0));
+    openDialog('Вебхуки',[domain,enabled,info,urls,help,queue],{type:'webhooks'});
+  }catch(error){toast(error.message);}
+};
 $('edit-form').onsubmit=async event=>{event.preventDefault();const button=$('save-edit');button.disabled=true;const data=new FormData(event.target);try {
   if(currentEdit.type==='product') await api('products/'+currentEdit.row.id,'PATCH',{name:data.get('name'),markup_percent:Number(data.get('markup')),fixed_price:data.get('priceMode')==='fixed'?data.get('fixed'):null,enabled:data.get('enabled')==='on'});
   else if(currentEdit.type==='balance') await api('users/'+currentEdit.row.id+'/balance','POST',{amount:data.get('amount'),subtract:data.get('kind')==='subtract',reason:data.get('reason'),request_id:currentEdit.requestId});
   else if(currentEdit.type==='review') await api('orders/'+currentEdit.row.id+'/review','POST',{action:data.get('reviewAction'),reason:data.get('reason'),supplier_order:data.get('supplierOrder'),refund_confirmed:data.get('confirmed')==='on',renewal_confirmed:data.get('confirmed')==='on'});
   else if(currentEdit.type==='paymentRecovery') await api('payments/'+currentEdit.row.id+'/recover','POST',{external_id:data.get('externalId')});
   else if(currentEdit.type==='supplierCurrency') await api('supplier/pricing','PUT',{currency:data.get('currency'),usd_rate:data.get('rate')});
+  else if(currentEdit.type==='webhooks') await api('webhooks','PUT',{base_url:data.get('baseUrl'),telegram_enabled:data.get('telegramEnabled')==='on'});
   else await api('supplier/sync','POST',{});
-  $('edit-dialog').close();await load();toast('Изменения сохранены');
+  const restart=currentEdit.type==='webhooks';$('edit-dialog').close();await load();toast(restart?'Сохранено. Перезапустите бота на хостинге.':'Изменения сохранены');
 }catch(error){$('dialog-error').textContent=error.message;}finally{button.disabled=false;}};
 enter().catch(()=>showLogin());

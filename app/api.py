@@ -12,12 +12,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
+from app import webhooks
 from app.catalog_policy import US_LABELS, allowed_codes, permitted_code
 from app.config import settings
 from app.db import Session
 from app.models import AdminSession, Audit, Ledger, Notice, Order, Payment, Product, User, now
 from app.money import sale_price, usd
-from app.payments import check_payment, recover_invoice
+from app.payments import recover_invoice
 from app.preferences import save_supplier_pricing, supplier_pricing
 from app.security import digest, verify_crypto_signature, verify_password
 from app.services import adjust_balance, credit_payment, refund_order
@@ -450,26 +451,103 @@ def demo_pay(payment_id: str):
 async def crypto_webhook(request: Request):
     if not settings.cryptopay_token or settings.demo_mode:
         raise HTTPException(404)
-    # Limit body before reading it fully; signature is over raw bytes.
-    chunks, size = [], 0
-    async for chunk in request.stream():
-        size += len(chunk)
-        if size > 65536:
-            raise HTTPException(413)
-        chunks.append(chunk)
-    raw = b"".join(chunks)
+    raw = await webhook_body(request)
     if not verify_crypto_signature(
         raw, request.headers.get("crypto-pay-api-signature", ""), settings.cryptopay_token
     ):
         raise HTTPException(401)
-    data = json.loads(raw)
+    data = webhook_json(raw)
     if data.get("update_type") == "invoice_paid":
-        external_id = str(data.get("payload", {}).get("invoice_id"))
-        with Session() as db:
-            payment_id = db.scalar(
-                select(Payment.id).where(Payment.provider == "cryptopay", Payment.external_id == external_id)
-            )
-        if payment_id:
-            # Independently fetch provider state; webhook alone never credits a balance.
-            await check_payment(payment_id)
+        payload = data.get("payload")
+        if not isinstance(payload, dict) or not isinstance(payload.get("invoice_id"), (int, str)):
+            raise HTTPException(400)
+        key = str(data.get("update_id") or digest(raw.hex()))
+        webhooks.enqueue("cryptopay", digest(key), {"external_id": str(payload["invoice_id"])})
     return {"ok": True}
+
+
+async def webhook_body(request, maximum=65536):
+    # Limit the streamed body before parsing; signatures cover the exact raw bytes.
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > maximum:
+            raise HTTPException(413)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def webhook_json(raw):
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError
+        return data
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(400, "Неверный JSON") from None
+
+
+@app.post("/webhooks/xrocket")
+async def rocket_webhook(request: Request):
+    if not settings.xrocket_token or settings.demo_mode:
+        raise HTTPException(404)
+    raw = await webhook_body(request)
+    # Legacy signing scheme, as documented in xRocket's migration guide.
+    if not verify_crypto_signature(
+        raw, request.headers.get("rocket-pay-signature", ""), settings.xrocket_token
+    ):
+        raise HTTPException(401)
+    data = webhook_json(raw)
+    key = str(data.get("id") or digest(raw.hex()))
+    webhooks.enqueue("xrocket", digest(key), {})
+    return {"ok": True}
+
+
+@app.post("/webhooks/telegram")
+async def telegram_webhook(request: Request):
+    if not settings.bot_token or not webhooks.configuration()["telegram_enabled"]:
+        raise HTTPException(404)
+    supplied = request.headers.get("x-telegram-bot-api-secret-token", "")
+    if not secrets.compare_digest(supplied.encode(), webhooks.telegram_secret().encode()):
+        raise HTTPException(401)
+    data = webhook_json(await webhook_body(request, maximum=1048576))
+    from aiogram.types import Update
+    from pydantic import ValidationError
+
+    try:
+        update = Update.model_validate(data)
+        if type(data.get("update_id")) is not int or data["update_id"] < 0:
+            raise ValueError
+    except (ValueError, ValidationError):
+        raise HTTPException(400, "Неверное обновление Telegram") from None
+    webhooks.enqueue("telegram", str(update.update_id), data)
+    return {"ok": True}
+
+
+class WebhookConfiguration(BaseModel):
+    base_url: str = Field(default="", max_length=256)
+    telegram_enabled: bool = False
+
+
+@app.get("/api/webhooks", dependencies=[Depends(authenticated)])
+def webhook_configuration():
+    config = webhooks.configuration()
+    base = config["base_url"]
+    return {
+        **config,
+        "urls": {
+            name: base + "/webhooks/" + name if base else "" for name in ("telegram", "cryptopay", "xrocket")
+        },
+        "queue": webhooks.queue_status(),
+        "restart_required": ("webhook" if config["telegram_enabled"] else "polling")
+        != config["telegram_status"],
+    }
+
+
+@app.put("/api/webhooks", dependencies=[Depends(authenticated)])
+def configure_webhooks(body: WebhookConfiguration):
+    webhooks.save_configuration(body.base_url, body.telegram_enabled)
+    return {
+        "ok": True,
+        "message": "Настройки сохранены. Перезапустите бота на хостинге для переключения Telegram.",
+    }

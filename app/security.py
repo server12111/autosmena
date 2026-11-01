@@ -27,5 +27,5 @@ def digest(token):
 def verify_crypto_signature(raw, signature, token):
     key = hashlib.sha256(token.encode()).digest()
     return bool(token and signature) and hmac.compare_digest(
-        hmac.new(key, raw, hashlib.sha256).hexdigest(), signature
+        hmac.new(key, raw, hashlib.sha256).hexdigest().encode(), signature.encode()
     )

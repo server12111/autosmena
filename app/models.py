@@ -32,6 +32,20 @@ class AppSetting(Base):
     value: Mapped[str] = mapped_column(Text)
 
 
+class WebhookEvent(Base):
+    __tablename__ = "webhook_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(24))
+    event_key: Mapped[str] = mapped_column(String(128))
+    payload: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    available_at: Mapped[int] = mapped_column(BigInteger, default=now)
+    updated_at: Mapped[int] = mapped_column(BigInteger, default=now)
+    created_at: Mapped[int] = mapped_column(BigInteger, default=now)
+    __table_args__ = (UniqueConstraint("provider", "event_key"),)
+
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
