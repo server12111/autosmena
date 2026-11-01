@@ -230,3 +230,17 @@ async def test_blocked_bot_notice_is_not_retried_forever(database):
     await worker.send_notices(bot)
     await worker.send_notices(bot)
     assert bot.send_message.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_plain_fallback_strips_premium_tags_and_entities(database):
+    from aiogram.exceptions import TelegramBadRequest
+    from aiogram.methods import SendMessage
+
+    notice = SimpleNamespace(
+        user_id=123, event="test:x", text='<tg-emoji emoji-id="1">✅</tg-emoji> <b>Готово</b> &amp; всё'
+    )
+    error = TelegramBadRequest(method=SendMessage(chat_id=123, text="x"), message="can't parse entities")
+    bot = SimpleNamespace(send_message=AsyncMock(side_effect=[error, None]))
+    await worker.deliver(bot, notice)
+    assert bot.send_message.call_args.args[1] == "✅ Готово & всё"

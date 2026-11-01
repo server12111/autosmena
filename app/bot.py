@@ -700,7 +700,9 @@ async def callback(query: CallbackQuery, state: FSMContext):
                 edit=True,
             )
             await allocate_order(order.id)
+            # The card below already shows the outcome: skip duplicate notifications.
             mark_notice_sent("allocated:" + order.id)
+            mark_notice_sent("refund:" + order.id)
             await order_card(message, user_id, order.id, edit=True)
         elif action == "renew":
             with Session() as db:
