@@ -214,3 +214,19 @@ async def test_telegram_delivery_failure_keeps_sms_queued(database, monkeypatch)
     assert bot.send_message.await_count == 2
     with database() as db:
         assert db.scalar(select(Notice)).sent is True
+
+
+@pytest.mark.asyncio
+async def test_blocked_bot_notice_is_not_retried_forever(database):
+    from aiogram.exceptions import TelegramForbiddenError
+    from aiogram.methods import SendMessage
+
+    with database.begin() as db:
+        db.add(Notice(user_id=123, event="test:blocked", text="hi"))
+    error = TelegramForbiddenError(
+        method=SendMessage(chat_id=123, text="hi"), message="bot was blocked by the user"
+    )
+    bot = SimpleNamespace(send_message=AsyncMock(side_effect=error))
+    await worker.send_notices(bot)
+    await worker.send_notices(bot)
+    assert bot.send_message.await_count == 1

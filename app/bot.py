@@ -216,12 +216,12 @@ def order_screen(order, archived, checked=False, again=False):
         lines += ["", f"<blockquote>Последний код: <code>{escape(order.sms)}</code></blockquote>"]
     if live and not order.sms:
         lines += ["", "Код придёт в этот чат автоматически."]
-    elif live:
+    elif live and not again:
         lines += ["", "Новые коды тоже придут сюда автоматически."]
     if order.status == "refunded":
         lines += ["", f"${display(order.price)} возвращены на баланс."]
     elif order.status == "review":
-        lines += ["", "Проверяем заказ у поставщика. Деньги не потеряются — мы сообщим результат в этот чат."]
+        lines += ["", "Проверяем заказ. Деньги не потеряются — результат придёт в этот чат."]
     elif order.status in ("reserved", "allocating"):
         lines += ["", "Получаем номер, это занимает несколько секунд."]
     elif order.status == "expired":
@@ -230,7 +230,7 @@ def order_screen(order, archived, checked=False, again=False):
         lines += [
             "",
             f"{icon('refresh')} <b>Ждём новый код.</b> Нажмите «Отправить код ещё раз» в Telegram — "
-            "код придёт в этот чат, как только поставщик его получит.",
+            "он придёт в этот чат автоматически.",
         ]
     lines += ["", f"<i>Заказ {order.id[:8]} · ${display(order.price)}</i>"]
     if checked:

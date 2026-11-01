@@ -64,14 +64,14 @@ def public_url():
 def reseller(authorization: str = Header(default=""), x_api_key: str = Header(default="")):
     key = x_api_key or (authorization[7:] if authorization.lower().startswith("bearer ") else "")
     if not key.startswith(KEY_PREFIX):
-        raise HTTPException(401, "API key required: Authorization: Bearer <key>")
+        raise HTTPException(401, "Нужен API-ключ: Authorization: Bearer <ключ>")
     with Session.begin() as db:
         record = db.scalar(select(ApiKey).where(ApiKey.key_hash == key_digest(key)))
         if not record:
-            raise HTTPException(401, "Invalid API key")
+            raise HTTPException(401, "Неверный API-ключ")
         user = db.get(User, record.user_id)
         if not user or user.blocked:
-            raise HTTPException(403, "Account is blocked")
+            raise HTTPException(403, "Аккаунт заблокирован")
         if not record.last_used_at or now() - record.last_used_at >= 60:
             record.last_used_at = now()
         user_id = record.user_id
@@ -80,7 +80,7 @@ def reseller(authorization: str = Header(default=""), x_api_key: str = Header(de
     while window and moment - window[0] > 60:
         window.popleft()
     if len(window) >= RATE_LIMIT:
-        raise HTTPException(429, "Too many requests: 60 per minute")
+        raise HTTPException(429, "Слишком много запросов: не больше 60 в минуту")
     window.append(moment)
     return user_id
 
@@ -102,7 +102,7 @@ class Purchase(BaseModel):
     product_id: int
     request_id: str = Field(
         default_factory=lambda: secrets.token_hex(12),
-        min_length=8,
+        min_length=1,
         max_length=48,
         pattern=r"^[A-Za-z0-9_-]+$",
     )
@@ -140,7 +140,7 @@ def install(app):
         with Session() as db:
             product = db.get(Product, body.product_id)
             if not product or not product.enabled or product.supplier_code not in allowed_codes():
-                raise ValueError("Product is not available")
+                raise ValueError("Товар недоступен")
             price = sale_price(product)
         order = reserve_order(user_id, body.product_id, f"api:{user_id}:{body.request_id}", price)
         await allocate_order(order.id)
@@ -164,7 +164,7 @@ def install(app):
         with Session() as db:
             order = db.get(Order, order_id)
             if not order or order.user_id != user_id:
-                raise HTTPException(404, "Order not found")
+                raise HTTPException(404, "Заказ не найден")
         try:
             await refresh_order(order_id, user_id)
         except Exception:

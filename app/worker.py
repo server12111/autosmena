@@ -3,7 +3,7 @@ import logging
 import re
 from html import unescape
 
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from sqlalchemy import select
 
 from app import webhooks
@@ -56,6 +56,11 @@ async def send_notices(bot):
         for notice in notices:
             try:
                 await deliver(bot, notice)
+            except (TelegramForbiddenError, TelegramBadRequest) as exc:
+                # Blocked bot or unknown chat will never succeed: stop retrying every second.
+                log.warning("Notification dropped: id=%s type=%s", notice.id, type(exc).__name__)
+                with Session.begin() as db:
+                    db.get(Notice, notice.id).sent = True
             except Exception as exc:
                 log.warning("Notification failed: id=%s type=%s", notice.id, type(exc).__name__)
             else:

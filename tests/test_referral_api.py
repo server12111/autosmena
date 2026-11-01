@@ -98,3 +98,13 @@ def test_api_rejects_blocked_users_and_insufficient_balance(api, database):
     with database.begin() as db:
         db.get(User, 123).blocked = True
     assert api.get("/reseller/v1/balance", headers=headers).status_code == 403
+
+
+def test_short_request_ids_are_accepted(api, database):
+    with database.begin() as db:
+        db.get(User, 123).balance = 5_000_000
+    headers = {"Authorization": "Bearer " + reseller.issue_key(123)}
+    first = api.post("/reseller/v1/orders", json={"product_id": 1, "request_id": "42"}, headers=headers)
+    assert first.status_code == 200
+    again = api.post("/reseller/v1/orders", json={"product_id": 1, "request_id": "42"}, headers=headers)
+    assert again.json()["id"] == first.json()["id"]
