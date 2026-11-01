@@ -607,8 +607,15 @@ async def admin_callback(query: CallbackQuery, state: FSMContext):
     except ValueError as exc:
         await show(message, f"{icon('cancel')} " + escape(user_error(exc)), [[BACK]])
     except Exception as exc:
-        log.warning("Admin action failed: action=%s type=%s", action, type(exc).__name__)
-        await show(message, f"{icon('cancel')} Не получилось: {escape(type(exc).__name__)}", [[BACK]])
+        log.exception("Admin action failed: action=%s", action)
+        # Admins need the reason to act on it (database locked, supplier error...). The text is
+        # trimmed and never contains secrets: SQL parameters are hidden below.
+        detail = str(getattr(exc, "orig", None) or exc).split("\n")[0][:300]
+        await show(
+            message,
+            f"{icon('cancel')} Не получилось: {escape(type(exc).__name__)}\n<code>{escape(detail)}</code>",
+            [[BACK]],
+        )
 
 
 @router.message(AdminInput.value, ~F.text.startswith("/"))
