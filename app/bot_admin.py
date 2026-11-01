@@ -158,7 +158,7 @@ async def product(message, product_id, edit=False):
                 ("Цена $", f"adm:ask:price:{p.id}", "money", ""),
                 ("Наценка %", f"adm:ask:markup:{p.id}", "stats"),
             ],
-            [("Название", f"adm:ask:name:{p.id}", "copy")],
+            [("Название", f"adm:ask:name:{p.id}", "payments")],
             [("Товары", "adm:products", "price", ""), BACK],
         ],
         edit,
