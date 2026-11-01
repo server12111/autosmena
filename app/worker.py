@@ -57,6 +57,10 @@ async def send_notices(bot):
             try:
                 await deliver(bot, notice)
             except (TelegramForbiddenError, TelegramBadRequest) as exc:
+                if not undeliverable(exc):
+                    # Keep the notice (it may be an SMS code) and retry; log why it failed.
+                    log.warning("Notification failed: id=%s error=%s", notice.id, str(exc)[:200])
+                    continue
                 # Blocked bot or unknown chat will never succeed: stop retrying every second.
                 log.warning("Notification dropped: id=%s type=%s", notice.id, type(exc).__name__)
                 with Session.begin() as db:
@@ -66,6 +70,20 @@ async def send_notices(bot):
             else:
                 with Session.begin() as db:
                     db.get(Notice, notice.id).sent = True
+
+
+RECIPIENT_GONE = (
+    "chat not found",
+    "user not found",
+    "bot was blocked",
+    "user is deactivated",
+    "bot can't initiate",
+)
+
+
+def undeliverable(exc):
+    """Only errors about the recipient are permanent; anything else may succeed on retry."""
+    return isinstance(exc, TelegramForbiddenError) or any(text in str(exc).lower() for text in RECIPIENT_GONE)
 
 
 def notice_buttons(event, text):

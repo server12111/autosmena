@@ -211,3 +211,17 @@ async def test_product_card_buttons_are_actions_not_copy_buttons(admin):
             assert button.copy_text is None, button.text
             assert button.callback_data and button.callback_data.startswith("adm:"), button.text
     assert any(b.callback_data == "adm:ask:name:1" for r in markup.inline_keyboard for b in r)
+
+
+@pytest.mark.asyncio
+async def test_admin_input_reports_unexpected_errors(admin, monkeypatch):
+    async def boom(bot, text, admin_id):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(bot_admin.subscription, "add", boom)
+    state = FakeState()
+    await bot_admin.admin_callback(click("adm:ask:channel:0"), state)
+    message = typed("@promo")
+    message.bot = None
+    await bot_admin.admin_input(message, state)
+    assert "database is locked" in message.answer.call_args.args[0]

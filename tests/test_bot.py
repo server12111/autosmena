@@ -268,7 +268,7 @@ async def test_screens_show_their_banner_as_large_preview_above_text(database, m
     from app.config import settings
 
     monkeypatch.setattr(settings, "banner_base_url", "https://cdn.example/brand")
-    bot.banner.cache_clear()
+    bot.banner_version.cache_clear()
     message = SimpleNamespace(answer=AsyncMock())
     await bot.send_menu(message, 123)
     preview = message.answer.call_args.kwargs["link_preview_options"]
@@ -286,7 +286,7 @@ async def test_screens_show_their_banner_as_large_preview_above_text(database, m
         event.from_user.first_name = "T"
         await bot.callback(event, FakeState())
         assert f"/{name}.png" in event.message.edit_text.call_args.kwargs["link_preview_options"].url, data
-    bot.banner.cache_clear()
+    bot.banner_version.cache_clear()
 
 
 @pytest.mark.asyncio
@@ -308,3 +308,13 @@ async def test_out_of_stock_refund_shown_on_card_without_duplicate_message(datab
     with database() as db:
         assert db.get(User, 123).balance == 2_000_000
         assert all(n.sent for n in db.query(Notice).all())
+
+
+def test_banner_follows_domain_changes_without_restart(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "banner_base_url", "")
+    monkeypatch.setattr(bot, "public_url", lambda: "https://old.example")
+    assert bot.banner("main").startswith("https://old.example/static/brand/main.png")
+    monkeypatch.setattr(bot, "public_url", lambda: "https://new.example")
+    assert bot.banner("main").startswith("https://new.example/static/brand/main.png")

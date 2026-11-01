@@ -166,7 +166,7 @@ async def test_raw_status_reads_admin_answer_that_aiogram_models_reject(monkeypa
             assert url.endswith("/getChatMember") and json == {"chat_id": -1001, "user_id": 1}
             return Response()
 
-    monkeypatch.setattr(subscription.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(subscription, "client", Client)
     real = SimpleNamespace(member_status=REAL_MEMBER_STATUS)
     assert await real.member_status(SimpleNamespace(token="t"), -1001, 1) == "administrator"
     answer["result"] = {"status": "restricted", "is_member": True, "user": answer["result"]["user"]}

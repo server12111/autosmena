@@ -123,8 +123,8 @@ async def products(message, edit=False):
     await show(
         message,
         f"{icon('price')} <b>Товары и цены</b>\n\n"
-        + ("Выберите товар." if rows else "Товаров нет. Импортируйте каталог в веб-админке."),
-        buttons + [[BACK]],
+        + ("Выберите товар." if rows else "Товаров нет. Импортируйте каталог в «Запуск магазина»."),
+        buttons + ([] if rows else [[("Запуск магазина", "adm:setup", "confirm")]]) + [[BACK]],
         edit,
     )
 
@@ -657,5 +657,14 @@ async def admin_input(message: Message, state: FSMContext):
         await show(
             message,
             f"{icon('cancel')} {escape(str(exc))}\nОтправьте ещё раз или нажмите «Отмена».",
+            [[("Отмена", "adm:home", "cancel", "")]],
+        )
+    except Exception as exc:
+        log.exception("Admin input failed: kind=%s", kind)
+        detail = str(getattr(exc, "orig", None) or exc).split("\n")[0][:300]
+        await show(
+            message,
+            f"{icon('cancel')} Не получилось: {escape(type(exc).__name__)}\n<code>{escape(detail)}</code>\n"
+            "Отправьте ещё раз или нажмите «Отмена».",
             [[("Отмена", "adm:home", "cancel", "")]],
         )

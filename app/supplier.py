@@ -180,7 +180,7 @@ class ApiccSupplier:
         return str(code), str(data.get("code_time") or "")[:128]
 
     async def cancel(self, order):
-        raise ValueError("Отмена этой аренды недоступна. Обратитесь в поддержку")
+        raise ValueError("Отмена этого номера недоступна. Обратитесь в поддержку")
 
     async def renew(self, code, order):
         if not permitted_code(code):

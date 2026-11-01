@@ -265,3 +265,24 @@ async def test_worker_loop_survives_transient_errors(monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await worker.guarded("orders", flaky, 0)
     assert calls["n"] == 2  # the first failure was logged and the loop went on
+
+
+@pytest.mark.asyncio
+async def test_only_recipient_errors_drop_a_notice(database):
+    from aiogram.exceptions import TelegramBadRequest
+    from aiogram.methods import SendMessage
+
+    with database.begin() as db:
+        db.add(Notice(user_id=123, event="sms:keep", text="<code>111</code>"))
+        db.add(Notice(user_id=123, event="test:gone", text="hi"))
+    method = SendMessage(chat_id=123, text="x")
+
+    async def send(chat_id, text, **kwargs):
+        if "111" in text:
+            raise TelegramBadRequest(method=method, message="Bad Request: BUTTON_DATA_INVALID")
+        raise TelegramBadRequest(method=method, message="Bad Request: chat not found")
+
+    await worker.send_notices(SimpleNamespace(send_message=send))
+    with database() as db:
+        sent = {n.event: n.sent for n in db.scalars(select(Notice))}
+    assert sent == {"sms:keep": False, "test:gone": True}

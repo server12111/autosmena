@@ -301,7 +301,7 @@ async def review_order(order_id: str, body: OrderReview):
                 raise ValueError("Исходный номер не найден")
         state = await supplier.status(parent)
         if state.status != "active" or not state.payload.get("end_time"):
-            raise ValueError("Поставщик не подтвердил действующую аренду")
+            raise ValueError("Поставщик не подтвердил действующий номер")
         with Session.begin() as db:
             changed = db.execute(
                 update(Order)
@@ -333,7 +333,7 @@ async def review_order(order_id: str, body: OrderReview):
                 )
     else:
         if settings.demo_mode or not body.supplier_order or order.parent_id:
-            raise ValueError("Укажите номер заказа поставщика для исходной аренды")
+            raise ValueError("Укажите номер заказа поставщика для исходной покупки")
         data = await supplier.call("/api/v1/order/api", {"ordernum": body.supplier_order})
         if len(data["list"]) != 1:
             raise ValueError("Для привязки нужен заказ поставщика ровно на один номер")
