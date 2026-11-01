@@ -124,7 +124,8 @@ def avatar(image, center, radius, letter):
     )
 
 
-NEUTRAL = {"user_id": None, "username": "", "balance": "0.00", "numbers": 0, "referrals": 0, "deposited": "0.00"}
+# Sample figures for the shared fallback picture: looks alive without belonging to anyone.
+NEUTRAL = {"user_id": None, "username": "", "balance": "24.60", "numbers": 3, "referrals": 12, "deposited": "50.00"}
 
 
 def render(kind, data):
