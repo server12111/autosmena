@@ -83,3 +83,16 @@ test('invoice recovery submits the selected external invoice id',async()=>{
     assert.equal(request.method,'POST');
   } finally {dom.window.close();}
 });
+
+test('supplier currency can be configured through the admin without env editing',async()=>{
+  const {dom,win,calls}=await setup();
+  try {
+    await win.document.getElementById('supplier-currency').onclick();
+    const form=win.document.getElementById('edit-form');
+    form.elements.currency.value='USDT';form.elements.currency.onchange();
+    assert.equal(form.elements.rate.value,'1');
+    await form.onsubmit({preventDefault(){},target:form});
+    const request=calls.find(c=>c.method==='PUT');
+    assert.deepEqual(JSON.parse(request.body),{currency:'USDT',usd_rate:'1'});
+  } finally {dom.window.close();}
+});

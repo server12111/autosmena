@@ -17,6 +17,7 @@ from app.db import Session
 from app.models import AdminSession, Audit, Ledger, Notice, Order, Payment, Product, User, now
 from app.money import sale_price, usd
 from app.payments import check_payment, recover_invoice
+from app.preferences import save_supplier_pricing, supplier_pricing
 from app.security import digest, verify_crypto_signature, verify_password
 from app.services import adjust_balance, credit_payment, refund_order
 from app.supplier import RENTAL_LABEL, Rejected, supplier, sync_catalog
@@ -214,6 +215,22 @@ class ProductChange(BaseModel):
 class CatalogSync(BaseModel):
     category: int = Field(gt=0)
     label: str = Field(min_length=1, max_length=64)
+
+
+class SupplierPricing(BaseModel):
+    currency: str = Field(pattern=r"^[A-Z]{3,6}$")
+    usd_rate: str = Field(max_length=32)
+
+
+@app.get("/api/supplier/pricing", dependencies=[Depends(authenticated)])
+def pricing():
+    return supplier_pricing()
+
+
+@app.put("/api/supplier/pricing", dependencies=[Depends(authenticated)])
+def change_pricing(body: SupplierPricing):
+    save_supplier_pricing(body.currency, body.usd_rate)
+    return {"ok": True}
 
 
 @app.get("/api/connections", dependencies=[Depends(authenticated)])

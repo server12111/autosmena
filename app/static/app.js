@@ -63,6 +63,7 @@ async function load() {
   const current=++loadId; $('error').hidden=true; $('page-title').textContent=titles[view];document.querySelectorAll('[data-view]').forEach(button=>button.classList.toggle('active',button.dataset.view===view));
   $('dashboard').hidden=view!=='overview';$('table-section').hidden=view==='overview';
   $('import-catalog').hidden=view!=='products';
+  $('supplier-currency').hidden=view!=='products';
   try {
     if(view==='overview') {
       const data=await api('overview');if(current!==loadId)return;
@@ -119,12 +120,25 @@ $('import-catalog').onclick=async()=>{
   const categories=action('Показать категории api.cc',async()=>{const data=await api('supplier/categories');info.textContent=JSON.stringify(data,null,2);info.style.whiteSpace='pre-wrap';});
   openDialog('Импорт каталога',[info,categories,category,label],{type:'import'});
 };
+$('supplier-currency').onclick=async()=>{
+  try {
+    const current=await api('supplier/pricing');
+    const select=el('select');select.name='currency';
+    for(const [value,label] of [['USD','USD — доллар'],['USDT','USDT — учёт 1:1 к USD'],['CNY','CNY — юань'],['OTHER','Другая валюта']]){const option=el('option',label);option.value=value;select.append(option);}
+    select.value=['USD','USDT','CNY'].includes(current.currency)?current.currency:'OTHER';
+    const label=el('label','Валюта цен в кабинете api.cc');label.append(select);
+    const rate=field('Сколько USD стоит одна единица валюты поставщика','rate','number',current.usd_rate||'');rate.lastChild.min='.0000000001';rate.lastChild.step='any';rate.lastChild.required=true;
+    const toggle=()=>{const fixed=['USD','USDT'].includes(select.value);rate.lastChild.readOnly=fixed;if(fixed)rate.lastChild.value='1';};select.onchange=toggle;toggle();
+    openDialog('Валюта поставщика',[el('p','Сверьте валюту с кабинетом api.cc. При изменении курса товары отключатся до обновления каталога и проверки цен.'),label,rate],{type:'supplierCurrency'});
+  } catch(error){toast(error.message);}
+};
 $('close-dialog').onclick=()=>$('edit-dialog').close();
 $('edit-form').onsubmit=async event=>{event.preventDefault();const button=$('save-edit');button.disabled=true;const data=new FormData(event.target);try {
   if(currentEdit.type==='product') await api('products/'+currentEdit.row.id,'PATCH',{name:data.get('name'),markup_percent:Number(data.get('markup')),fixed_price:data.get('priceMode')==='fixed'?data.get('fixed'):null,enabled:data.get('enabled')==='on'});
   else if(currentEdit.type==='balance') await api('users/'+currentEdit.row.id+'/balance','POST',{amount:data.get('amount'),subtract:data.get('kind')==='subtract',reason:data.get('reason'),request_id:currentEdit.requestId});
   else if(currentEdit.type==='review') await api('orders/'+currentEdit.row.id+'/review','POST',{action:data.get('reviewAction'),reason:data.get('reason'),supplier_order:data.get('supplierOrder'),refund_confirmed:data.get('confirmed')==='on',renewal_confirmed:data.get('confirmed')==='on'});
   else if(currentEdit.type==='paymentRecovery') await api('payments/'+currentEdit.row.id+'/recover','POST',{external_id:data.get('externalId')});
+  else if(currentEdit.type==='supplierCurrency') await api('supplier/pricing','PUT',{currency:data.get('currency'),usd_rate:data.get('rate')});
   else await api('supplier/sync','POST',{category:Number(data.get('category')),label:data.get('label')});
   $('edit-dialog').close();await load();toast('Изменения сохранены');
 }catch(error){$('dialog-error').textContent=error.message;}finally{button.disabled=false;}};

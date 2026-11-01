@@ -12,10 +12,12 @@ def test_server_config_without_domain_uses_private_tunnel():
     values = dotenv_values(stream=StringIO(build_env("test-password-123")))
     assert values["ADMIN_ACCESS_MODE"] == "ssh_tunnel"
     assert values["COOKIE_SECURE"] == "false"
-    assert values["POSTGRES_PASSWORD"] in values["DATABASE_URL"]
+    assert "POSTGRES_PASSWORD" not in values
+    assert "DATABASE_URL" not in values
     assert verify_password("test-password-123", values["ADMIN_PASSWORD_HASH"])
     assert "test-password-123" not in values.values()
     config = Settings(_env_file=None, **{k.lower(): v for k, v in values.items()})
+    assert config.resolved_database_url.startswith("sqlite:")
     config.validate_runtime()
 
 

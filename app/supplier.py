@@ -12,6 +12,7 @@ from decimal import ROUND_UP, Decimal
 import httpx
 
 from app.config import settings
+from app.preferences import supplier_rate
 
 RENTAL_EXPIRY = 5  # UI: "Більше 60 днів"; OpenAPI: 60–80 days remaining.
 RENTAL_LABEL = "Больше 60 дней (диапазон поставщика 60–80)"
@@ -58,8 +59,7 @@ class ApiccSupplier:
     @property
     def ready(self):
         try:
-            rate = Decimal(settings.apicc_usd_rate)
-            return bool(settings.apicc_api_key) and rate.is_finite() and rate > 0
+            return bool(settings.apicc_api_key) and supplier_rate() is not None
         except Exception:
             return False
 
@@ -93,8 +93,10 @@ class ApiccSupplier:
         if int(stock.get("num", 0)) < 1:
             raise Rejected("Нет номеров со сроком больше 60 дней")
 
-    def cost_usd(self, price):
-        rate = Decimal(settings.apicc_usd_rate)
+    def cost_usd(self, price, rate=None):
+        rate = supplier_rate() if rate is None else rate
+        if rate is None:
+            raise ValueError("Выберите валюту поставщика в админке")
         cost = Decimal(str(price)) * rate * 1000000
         if not cost.is_finite() or cost < 0:
             raise ValueError("Некорректная цена поставщика")
@@ -156,7 +158,7 @@ async def sync_catalog(category: int, label: str):
     if settings.demo_mode:
         raise ValueError("Отключите DEMO_MODE, чтобы импортировать каталог api.cc")
     if not supplier.ready:
-        raise ValueError("Нужны APICC_API_KEY и APICC_USD_RATE")
+        raise ValueError("Укажите ключ api.cc и выберите валюту поставщика в админке")
     collected = []
     for card_type in (1, 2, 3):
         data = await supplier.catalog(category, card_type)

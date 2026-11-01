@@ -16,9 +16,11 @@ def make_engine(url):
         def configure(dbapi, _):
             dbapi.execute("PRAGMA foreign_keys=ON")
             dbapi.execute("PRAGMA journal_mode=WAL")
+            dbapi.execute("PRAGMA synchronous=FULL")
+            dbapi.execute("PRAGMA busy_timeout=30000")
 
     return engine
 
 
-engine = make_engine(settings.database_url)
+engine = make_engine(settings.resolved_database_url)
 Session = sessionmaker(engine, expire_on_commit=False)

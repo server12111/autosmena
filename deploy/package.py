@@ -8,6 +8,8 @@ FOLDERS = ("app", "deploy", "docs", "migrations", "tests", "tests-ui")
 FILES = (
     "pyproject.toml",
     "requirements.lock",
+    "requirements.txt",
+    "main.py",
     "README.md",
     "Dockerfile",
     "compose.yaml",
