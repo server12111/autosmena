@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from app import webhooks
+from app import reseller, webhooks
 from app.catalog_policy import US_LABELS, allowed_codes, permitted_code
 from app.config import settings
 from app.db import Session
@@ -36,6 +36,7 @@ app = FastAPI(title="Smena", lifespan=lifespan, docs_url=None, redoc_url=None, o
 static = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static), name="static")
 login_attempts = defaultdict(deque)
+reseller.install(app)
 
 
 @app.middleware("http")

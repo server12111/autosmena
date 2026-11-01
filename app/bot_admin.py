@@ -20,7 +20,7 @@ from app.bot_ui import STATUS_LABELS, format_phone, icon, show, status_icon
 from app.catalog_policy import allowed_codes, permitted_code
 from app.config import settings
 from app.db import Session
-from app.models import Audit, Notice, Order, Payment, Product, User, now
+from app.models import ApiKey, Audit, Ledger, Notice, Order, Payment, Product, User, now
 from app.money import display, sale_price, usd
 from app.services import adjust_balance, refund_order
 from app.supplier import Rejected, supplier
@@ -70,6 +70,11 @@ async def home(message, edit=False):
         margin = db.scalar(select(func.coalesce(func.sum(sold.c.price - sold.c.cost), 0)))
         sales_day = db.scalar(select(func.count()).select_from(sold).where(sold.c.created_at >= day))
         review = db.scalar(select(func.count()).select_from(Order).where(Order.status == "review"))
+        referral_paid = db.scalar(
+            select(func.coalesce(func.sum(Ledger.delta), 0)).where(Ledger.event.startswith("ref:"))
+        )
+        referred = db.scalar(select(func.count()).select_from(User).where(User.referrer_id.is_not(None)))
+        api_keys = db.scalar(select(func.count()).select_from(ApiKey))
     mode = (
         "🧪 тестовый режим" if settings.demo_mode else ("✅ работает" if supplier.ready else "❗️ не настроен")
     )
@@ -81,7 +86,9 @@ async def home(message, edit=False):
         f"{icon('money')} Пополнения: <b>{money(deposits)}</b> ({money(deposits_day)} за сутки)\n"
         f"{icon('phone')} Продажи: <b>{sales}</b> ({sales_day} за сутки)\n"
         f"{icon('stats')} Выручка: <b>{money(revenue)}</b> · маржа {money(margin)}\n"
-        f"{icon('wallet')} На балансах клиентов: {money(balances)}</blockquote>"
+        f"{icon('wallet')} На балансах клиентов: {money(balances)}\n"
+        f"{icon('star')} Рефералов: {referred} · выплачено {money(referral_paid)}\n"
+        f"{icon('send')} API-ключей: {api_keys}</blockquote>"
         + (f"\n\n{icon('cancel')} Заказов на проверке: <b>{review}</b>" if review else ""),
         [
             [("Товары и цены", "adm:products", "price"), ("Пользователь", "adm:find", "user")],

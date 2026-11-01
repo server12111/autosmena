@@ -52,6 +52,7 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(128), default="")
     balance: Mapped[int] = mapped_column(BigInteger, default=0)
     blocked: Mapped[bool] = mapped_column(Boolean, default=False)
+    referrer_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     created_at: Mapped[int] = mapped_column(BigInteger, default=now)
     __table_args__ = (CheckConstraint("balance >= 0"),)
 
@@ -144,3 +145,14 @@ class Notice(Base):
     event: Mapped[str] = mapped_column(String(128), unique=True)
     text: Mapped[str] = mapped_column(Text)
     sent: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+
+class ApiKey(Base):
+    """One reseller key per user. Only a SHA-256 of the secret is stored."""
+
+    __tablename__ = "api_keys"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True, autoincrement=False)
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    prefix: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[int] = mapped_column(BigInteger, default=now)
+    last_used_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

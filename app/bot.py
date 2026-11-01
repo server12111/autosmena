@@ -6,15 +6,16 @@ import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from html import escape
+from urllib.parse import urlencode
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ChatType
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import SimpleEventIsolation
 from aiogram.types import BotCommand, BotCommandScopeChat, CallbackQuery, Message
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from app import bot_admin, webhooks
 from app.bot_admin import is_admin
@@ -37,7 +38,15 @@ from app.db import Session
 from app.models import Order, Payment, Product, User, now
 from app.money import display, sale_price, usd
 from app.payments import available_methods, check_payment, create_payment
-from app.services import allocate_order, ensure_user, mark_notice_sent, refresh_order, reserve_order
+from app.reseller import issue_key, key_info, public_url
+from app.services import (
+    allocate_order,
+    ensure_user,
+    mark_notice_sent,
+    referral_stats,
+    refresh_order,
+    reserve_order,
+)
 from app.supplier import RENTAL_LABEL, supplier
 
 router = Router()
@@ -52,6 +61,7 @@ METHOD_LABELS = {
     "demo": "Тестовое пополнение",
 }
 HOME = ("Меню", "home")
+BOT_USERNAME = "SmenaMarketBot"
 
 
 class Deposit(StatesGroup):
@@ -107,7 +117,7 @@ async def send_menu(message, user_id, edit=False):
         f"<blockquote>Баланс: <b>${display(balance)}</b></blockquote>{status}",
         [
             [(buy, "catalog:0", "catalog")],
-            [("Мои номера", "orders"), ("Кошелёк", "wallet")],
+            [("Профиль", "profile"), ("Кошелёк", "wallet")],
             support_row(),
             [("Админка", "adm:home", "admin")] if is_admin(user_id) else [],
         ],
@@ -116,9 +126,11 @@ async def send_menu(message, user_id, edit=False):
 
 
 @router.message(CommandStart())
-async def start(message: Message, state: FSMContext):
+async def start(message: Message, state: FSMContext, command: CommandObject | None = None):
     await state.clear()
-    ensure_user(message.from_user.id, message.from_user.username or "")
+    args = (command.args or "") if command else ""
+    referrer = int(args[4:]) if args.startswith("ref_") and args[4:].isdigit() else None
+    ensure_user(message.from_user.id, message.from_user.username or "", referrer)
     await send_menu(message, message.from_user.id)
 
 
@@ -187,7 +199,7 @@ async def product_screen(message, user_id, product_id, edit=False):
     )
 
 
-def order_screen(order, archived, checked=False):
+def order_screen(order, archived, checked=False, again=False):
     payload = json.loads(order.supplier_payload or "{}")
     status = STATUS_LABELS.get(order.status, order.status)
     until = format_date(payload.get("end_time"))
@@ -214,6 +226,12 @@ def order_screen(order, archived, checked=False):
         lines += ["", "Получаем номер, это занимает несколько секунд."]
     elif order.status == "expired":
         lines += ["", "Срок аренды закончился."]
+    if again and live:
+        lines += [
+            "",
+            f"{icon('refresh')} <b>Ждём новый код.</b> Нажмите «Отправить код ещё раз» в Telegram — "
+            "код придёт в этот чат, как только поставщик его получит.",
+        ]
     lines += ["", f"<i>Заказ {order.id[:8]} · ${display(order.price)}</i>"]
     if checked:
         lines.append(f"<i>Проверено в {datetime.now(timezone.utc):%H:%M:%S} UTC</i>")
@@ -223,23 +241,27 @@ def order_screen(order, archived, checked=False):
         if order.sms:
             copies.append(("Код", order.sms, "copy"))
         rows.append(copies)
-        rows.append([("Проверить SMS", "sms:" + order.id)])
+        rows.append(
+            [("Получить код ещё раз", "again:" + order.id)]
+            if order.sms
+            else [("Проверить SMS", "sms:" + order.id)]
+        )
     if order.status in ("reserved", "allocating"):
         rows.append([("Обновить", "order:" + order.id, "refresh")])
     if order.status in ("active", "expired") and not order.parent_id and not archived:
         rows.append([("Продлить номер", "renew:" + order.id)])
-    rows.append([("Мои номера", "orders"), HOME])
+    rows.append([("Мои номера", "orders"), ("Профиль", "profile", "user", "")])
     return "\n".join(lines), rows
 
 
-async def order_card(message, user_id, order_id, edit=False, checked=False):
+async def order_card(message, user_id, order_id, edit=False, checked=False, again=False):
     with Session() as db:
         order = db.get(Order, order_id)
         if not order or order.user_id != user_id:
             raise ValueError("Заказ не найден")
         product = db.get(Product, order.product_id)
         archived = not (product and permitted_code(product.supplier_code))
-    await show(message, *order_screen(order, archived, checked), edit)
+    await show(message, *order_screen(order, archived, checked, again), edit)
 
 
 async def orders(message, user_id, offset=0, edit=False):
@@ -256,7 +278,7 @@ async def orders(message, user_id, offset=0, edit=False):
         await show(
             message,
             f"{icon('orders')} <b>Мои номера</b>\n\nЗдесь появятся купленные номера.",
-            [[("Купить номер", "catalog:0")], [HOME]],
+            [[("Купить номер", "catalog:0")], [("Профиль", "profile", "user", ""), HOME]],
             edit,
         )
         return
@@ -281,9 +303,114 @@ async def orders(message, user_id, offset=0, edit=False):
     await show(
         message,
         f"{icon('orders')} <b>Мои номера</b>\n\nОткройте номер, чтобы скопировать его, проверить SMS или продлить.",
-        buttons + [navigation, [HOME]],
+        buttons + [navigation, [("Профиль", "profile", "user", ""), HOME]],
         edit,
     )
+
+
+def bot_link(payload=""):
+    return f"https://t.me/{BOT_USERNAME}" + (f"?start={payload}" if payload else "")
+
+
+async def profile(message, user_from, edit=False):
+    user_id = user_from.id
+    with Session() as db:
+        user = db.get(User, user_id)
+        numbers = db.scalar(
+            select(func.count())
+            .select_from(Order)
+            .where(
+                Order.user_id == user_id, Order.parent_id.is_(None), Order.status.in_(["waiting", "active"])
+            )
+        )
+        spent = db.scalar(
+            select(func.coalesce(func.sum(Order.price), 0)).where(
+                Order.user_id == user_id, Order.status.in_(["waiting", "active", "expired", "completed"])
+            )
+        )
+    invited, earned = referral_stats(user_id)
+    name = f"@{escape(user_from.username)}" if user_from.username else escape(user_from.first_name or "")
+    await show(
+        message,
+        f"{icon('user')} <b>Профиль</b> · {name}\n\n"
+        f"<blockquote>ID: <code>{user_id}</code>\n"
+        f"Баланс: <b>${display(user.balance if user else 0)}</b>\n"
+        f"Активных номеров: {numbers}\nПотрачено: ${display(spent)}</blockquote>\n"
+        f"{icon('star')} Рефералы: {invited} · заработано <b>${display(earned)}</b>",
+        [
+            [("Мои номера", "orders")],
+            [("Рефералы", "ref", "star"), ("API для реселлеров", "api", "send")],
+            [HOME],
+        ],
+        edit,
+    )
+
+
+async def referrals(message, user_id, edit=False):
+    invited, earned = referral_stats(user_id)
+    link = bot_link(f"ref_{user_id}")
+    share = "https://t.me/share/url?" + urlencode(
+        {"url": link, "text": "Номера Telegram США с кодом прямо в чат"}
+    )
+    percent = settings.referral_percent
+    await show(
+        message,
+        f"{icon('star')} <b>Реферальная программа</b>\n\n"
+        f"Приглашайте друзей и получайте <b>{percent}%</b> с каждого их пополнения — "
+        "сразу на баланс, навсегда.\n\n"
+        f"Ваша ссылка:\n<code>{escape(link)}</code>\n\n"
+        f"<blockquote>Приглашено: <b>{invited}</b>\nЗаработано: <b>${display(earned)}</b></blockquote>",
+        [
+            [("Скопировать ссылку", link, "copy"), ("Поделиться", share, "send")],
+            [("Профиль", "profile", "user", ""), HOME],
+        ],
+        edit,
+    )
+
+
+API_DOCS = """<b>Авторизация:</b> заголовок <code>Authorization: Bearer КЛЮЧ</code>
+Лимит — 60 запросов в минуту. Оплата — с баланса бота.
+
+<code>GET  /reseller/v1/balance</code> — баланс
+<code>GET  /reseller/v1/products</code> — товары и цены
+<code>POST /reseller/v1/orders</code> — купить номер
+  {{"product_id": 1, "request_id": "ваш-уникальный-id"}}
+<code>GET  /reseller/v1/orders</code> — история
+<code>GET  /reseller/v1/orders/ID</code> — статус, номер и код
+
+Повтор <code>request_id</code> не создаёт второй заказ. Код появляется в поле <code>code</code>.
+<b>Адрес:</b> <code>{url}</code>"""
+
+
+async def api_screen(message, user_id, edit=False, new_key=None):
+    info = key_info(user_id)
+    if new_key:
+        text = (
+            f"{icon('send')} <b>Ваш API-ключ</b>\n\n<code>{escape(new_key)}</code>\n\n"
+            f"{icon('cancel')} Сохраните его сейчас — больше он показан не будет. "
+            "Если ключ утёк, перевыпустите его: старый сразу перестанет работать."
+        )
+        rows = [[("Скопировать ключ", new_key, "copy")], [("Документация", "apidocs", "payments")]]
+    elif info:
+        used = paid_time(info.last_used_at) + " UTC" if info.last_used_at else "ещё не использовался"
+        text = (
+            f"{icon('send')} <b>API для реселлеров</b>\n\n"
+            f"<blockquote>Ключ: <code>{escape(info.prefix)}…</code>\n"
+            f"Создан: {paid_time(info.created_at)} UTC\nПоследний запрос: {used}</blockquote>\n"
+            "Покупайте номера и получайте коды из своего сервиса или бота. Цены — как в магазине."
+        )
+        rows = [
+            [("Документация", "apidocs", "payments")],
+            [("Перевыпустить ключ", "apikeyask", "cancel", "")],
+        ]
+    else:
+        text = (
+            f"{icon('send')} <b>API для реселлеров</b>\n\n"
+            "Подключите магазин к своему сервису или боту: покупка номеров и получение кодов "
+            "через HTTP API. Списание — с баланса этого аккаунта, цены как в магазине."
+        )
+        rows = [[("Создать ключ", "apikey", "confirm")], [("Документация", "apidocs", "payments")]]
+    await show(message, text, rows + [[("Профиль", "profile", "user", ""), HOME]], edit)
 
 
 def paid_time(value):
@@ -421,6 +548,13 @@ async def wallet_command(message: Message, state: FSMContext):
     await wallet(message, message.from_user.id)
 
 
+@router.message(Command("profile"))
+async def profile_command(message: Message, state: FSMContext):
+    await state.clear()
+    ensure_user(message.from_user.id, message.from_user.username or "")
+    await profile(message, message.from_user)
+
+
 @router.message(Command("cancel"))
 async def cancel_command(message: Message, state: FSMContext):
     await state.clear()
@@ -523,6 +657,31 @@ async def callback(query: CallbackQuery, state: FSMContext):
         elif action == "sms":
             await refresh_order(argument, user_id)
             await order_card(message, user_id, argument, edit=True, checked=True)
+        elif action == "again":
+            await refresh_order(argument, user_id)
+            await order_card(message, user_id, argument, edit=True, checked=True, again=True)
+        elif action == "profile":
+            await profile(message, query.from_user, edit=True)
+        elif action == "ref":
+            await referrals(message, user_id, edit=True)
+        elif action == "api":
+            await api_screen(message, user_id, edit=True)
+        elif action == "apidocs":
+            await show(
+                message,
+                f"{icon('payments')} <b>Документация API</b>\n\n" + API_DOCS.format(url=escape(public_url())),
+                [[("API", "api", "send"), HOME]],
+                edit=True,
+            )
+        elif action == "apikeyask":
+            await show(
+                message,
+                f"{icon('cancel')} <b>Перевыпустить ключ?</b>\n\nСтарый ключ сразу перестанет работать.",
+                [[("Да, перевыпустить", "apikey", "confirm")], [("Назад", "api", "send", "")]],
+                edit=True,
+            )
+        elif action == "apikey":
+            await api_screen(message, user_id, edit=True, new_key=issue_key(user_id))
         elif action == "wallet":
             await wallet(message, user_id, edit=True)
         elif action == "deposit":
@@ -659,11 +818,14 @@ async def run():
     bot, dispatcher = Bot(settings.bot_token), Dispatcher(events_isolation=SimpleEventIsolation())
     bot.session.middleware(PremiumFallback())
     await load_icons(bot)
+    global BOT_USERNAME
+    BOT_USERNAME = (await bot.me()).username or BOT_USERNAME
     dispatcher.include_router(bot_admin.router)
     dispatcher.include_router(router)
     commands = [
         BotCommand(command="start", description="Главное меню"),
         BotCommand(command="catalog", description="Купить номер Telegram США"),
+        BotCommand(command="profile", description="Профиль"),
         BotCommand(command="orders", description="Мои номера"),
         BotCommand(command="wallet", description="Кошелёк"),
     ]

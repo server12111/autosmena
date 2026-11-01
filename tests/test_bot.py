@@ -216,3 +216,48 @@ async def test_menu_has_no_help_or_payment_history_and_admin_only_for_owner(data
     assert not {"help", "payments", "adm:home"} & set(buttons(message.answer))
     await bot.send_menu(message, 999)
     assert "adm:home" in buttons(message.answer)
+
+
+@pytest.mark.asyncio
+async def test_profile_referral_and_api_screens(database):
+    for data in ("profile", "ref", "api", "apidocs"):
+        bot.last_action.clear()
+        event = query(data)
+        event.from_user.first_name = "Tester"
+        await bot.callback(event, FakeState())
+        assert event.message.edit_text.await_count, data
+    bot.last_action.clear()
+    event = query("ref")
+    await bot.callback(event, FakeState())
+    assert "start=ref_123" in event.message.edit_text.call_args.args[0]
+    bot.last_action.clear()
+    event = query("apikey")
+    await bot.callback(event, FakeState())
+    key = next(b for b in buttons(event.message.edit_text) if b and b.startswith("smn_"))
+    assert key in event.message.edit_text.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_code_again_button_after_first_code(database):
+    with database.begin() as db:
+        db.add(
+            Order(
+                id="e" * 32,
+                request_key="again",
+                user_id=123,
+                product_id=1,
+                price=1,
+                cost=1,
+                status="active",
+                phone="+15550001111",
+                sms="111111",
+            )
+        )
+    bot.last_action.clear()
+    event = query("order:" + "e" * 32)
+    await bot.callback(event, FakeState())
+    assert "again:" + "e" * 32 in buttons(event.message.edit_text)
+    bot.last_action.clear()
+    event = query("again:" + "e" * 32)
+    await bot.callback(event, FakeState())
+    assert "Ждём новый код" in event.message.edit_text.call_args.args[0]

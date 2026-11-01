@@ -13,16 +13,23 @@ from app.money import display, sale_price
 from app.supplier import Rejected, supplier
 
 
-def ensure_user(user_id, username=""):
+def ensure_user(user_id, username="", referrer_id=None):
+    """Creates the user on first contact. A referrer is attached only to brand-new users."""
     try:
         with Session.begin() as db:
             user = db.get(User, user_id)
             if user is None:
-                db.add(User(id=user_id, username=username))
-            else:
-                user.username = username
+                referrer = (
+                    referrer_id
+                    if referrer_id and referrer_id != user_id and db.get(User, referrer_id)
+                    else None
+                )
+                db.add(User(id=user_id, username=username, referrer_id=referrer))
+                return True
+            user.username = username
     except IntegrityError:
         pass  # Simultaneous /start requests may race on the primary key.
+    return False
 
 
 def move_balance(db, user_id, delta, event, note="", require_unblocked=False):
@@ -268,6 +275,38 @@ def mark_notice_sent(event):
         db.execute(update(Notice).where(Notice.event == event).values(sent=True))
 
 
+def referral_bonus(db, payment):
+    """The inviter earns a share of every top-up of an invited user, once per payment."""
+    from app.config import settings
+
+    user = db.get(User, payment.user_id)
+    bonus = payment.amount * settings.referral_percent // 100 // 10000 * 10000
+    if not user.referrer_id or bonus <= 0 or not db.get(User, user.referrer_id):
+        return
+    move_balance(db, user.referrer_id, bonus, "ref:" + payment.id, f"referral user={user.id}")
+    db.add(
+        Notice(
+            user_id=user.referrer_id,
+            event="ref:" + payment.id,
+            text=f"💸 <b>Реферальный бонус +${display(bonus)}</b>\n\n"
+            f"Ваш реферал пополнил баланс на ${display(payment.amount)}.",
+        )
+    )
+
+
+def referral_stats(user_id):
+    from sqlalchemy import func
+
+    with Session() as db:
+        invited = db.scalar(select(func.count()).select_from(User).where(User.referrer_id == user_id))
+        earned = db.scalar(
+            select(func.coalesce(func.sum(Ledger.delta), 0)).where(
+                Ledger.user_id == user_id, Ledger.event.startswith("ref:")
+            )
+        )
+    return invited, earned
+
+
 def credit_payment(payment_id, transaction_hash=None):
     """Call only after server-side verification of provider, amount, currency and reference."""
     with Session.begin() as db:
@@ -280,6 +319,7 @@ def credit_payment(payment_id, transaction_hash=None):
             return False
         payment = db.get(Payment, payment_id)
         move_balance(db, payment.user_id, payment.amount, "payment:" + payment.id)
+        referral_bonus(db, payment)
         db.add(
             Notice(
                 user_id=payment.user_id,

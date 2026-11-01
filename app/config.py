@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     support_url: str = "https://t.me/your_support"
     # Telegram IDs with access to the in-bot admin panel, comma separated.
     admin_ids: str = "7145919720"
+    referral_percent: int = 5
+    # Public HTTPS address shown to resellers; the admin "Вебхуки" domain overrides it.
+    public_url: str = "https://bot-1793540100-9906-srvnkproject.bothost.tech"
     apicc_api_key: str = ""
     apicc_url: str = "https://api.cc"
     apicc_usd_rate: str = ""

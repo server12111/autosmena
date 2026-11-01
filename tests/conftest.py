@@ -8,13 +8,13 @@ from app.security import password_hash
 
 @pytest.fixture
 def database(tmp_path, monkeypatch):
-    from app import api, bot, db, payments, services, worker
+    from app import api, bot, bot_admin, db, payments, reseller, services, worker
     from app.config import settings
 
     engine = make_engine("sqlite:///" + str(tmp_path / "test.db"))
     Base.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
-    for module in (api, bot, db, payments, services, worker):
+    for module in (api, bot, bot_admin, db, payments, reseller, services, worker):
         monkeypatch.setattr(module, "Session", factory)
     monkeypatch.setattr(settings, "demo_mode", True)
     monkeypatch.setattr(settings, "admin_password_hash", password_hash("test-password-123"))

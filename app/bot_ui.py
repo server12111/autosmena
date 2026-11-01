@@ -82,6 +82,12 @@ ROLES_BY_ACTION = {
     "pay": "payments",
     "payments": "payments",
     "sms": "refresh",
+    "again": "refresh",
+    "profile": "user",
+    "ref": "star",
+    "api": "send",
+    "apidocs": "payments",
+    "apikey": "confirm",
     "home": "home",
     "admin": "admin",
 }
