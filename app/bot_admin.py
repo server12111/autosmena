@@ -92,6 +92,7 @@ async def home(message, edit=False):
         f"{icon('send')} API-ключей: {api_keys}</blockquote>"
         + (f"\n\n{icon('cancel')} Заказов на проверке: <b>{review}</b>" if review else ""),
         [
+            [("Запуск магазина", "adm:setup", "confirm" if supplier.ready else "cancel")],
             [("Товары и цены", "adm:products", "price"), ("Пользователь", "adm:find", "user")],
             [("Обязательная подписка", "adm:subs", "send")],
             [(f"На проверке · {review}", "adm:review", "cancel", "")] if review else [],
@@ -281,6 +282,94 @@ def change_balance(user_id, kind, text, admin_id, request_id):
                 )
 
 
+def setup_state():
+    from app.payments import available_methods
+    from app.preferences import supplier_pricing
+
+    pricing = supplier_pricing()
+    with Session() as db:
+        enabled = db.scalar(
+            select(func.count())
+            .select_from(Product)
+            .where(
+                Product.enabled.is_(True), Product.kind != "renew", Product.supplier_code.in_(allowed_codes())
+            )
+        )
+        imported = db.scalar(
+            select(func.count()).select_from(Product).where(Product.supplier_code.in_(allowed_codes()))
+        )
+    return {
+        "key": bool(settings.apicc_api_key) or settings.demo_mode,
+        "currency": pricing["currency"],
+        "rate": pricing["usd_rate"],
+        "ready": supplier.ready,
+        "imported": imported,
+        "enabled": enabled,
+        "payments": available_methods(),
+    }
+
+
+async def setup_screen(message, edit=False, note=""):
+    st = setup_state()
+
+    def mark(ok):
+        return "✅" if ok else "❗️"
+
+    currency = f"{st['currency']} (курс {st['rate']})" if st["currency"] else "не выбрана"
+    lines = [
+        "🚀 <b>Запуск магазина</b>",
+        "",
+        f"{mark(st['key'])} 1. Ключ api.cc на сервере (<code>APICC_API_KEY</code>)",
+        f"{mark(st['ready'])} 2. Валюта кабинета api.cc: {escape(currency)}",
+        f"{mark(st['imported'])} 3. Каталог импортирован: {st['imported']} товаров",
+        f"{mark(st['enabled'])} 4. В продаже: {st['enabled']} товаров",
+        f"{mark(st['payments'])} 5. Способы оплаты: {', '.join(st['payments']) or 'не подключены'}",
+        "",
+    ]
+    if not st["key"]:
+        lines.append("💡 Добавьте <code>APICC_API_KEY</code> в переменные Bothost и перезапустите бота.")
+    elif not st["ready"]:
+        lines.append("💡 Выберите валюту, в которой ведётся баланс вашего кабинета api.cc.")
+    elif not st["imported"]:
+        lines.append("💡 Импортируйте каталог — товары появятся выключенными.")
+    elif not st["enabled"]:
+        lines.append("💡 Откройте «Товары и цены», проверьте цену и включите товар.")
+    elif not st["payments"]:
+        lines.append("💡 Добавьте ключи оплаты (CRYPTOPAY_TOKEN / XROCKET_TOKEN) в переменные Bothost.")
+    else:
+        lines.append("🔥 Всё готово — магазин продаёт.")
+    if note:
+        lines += ["", note]
+    rows = []
+    if st["key"] and not settings.demo_mode:
+        rows.append(
+            [
+                ("Валюта: USD", "adm:cur:USD", "money", ""),
+                ("Другая валюта", "adm:ask:currency:0", "money", ""),
+            ]
+        )
+    if st["ready"] and not settings.demo_mode:
+        rows.append([("Импортировать каталог", "adm:sync", "confirm")])
+    rows.append([("Товары и цены", "adm:products", "price"), ("Обновить", "adm:setup", "refresh")])
+    await show(message, "\n".join(lines), rows + [[BACK]], edit)
+
+
+def set_currency(text, admin_id):
+    from app.preferences import save_supplier_pricing
+
+    parts = text.upper().replace(",", ".").split()
+    if len(parts) != 2:
+        raise ValueError("Отправьте код валюты и курс к доллару, например: CNY 0.14")
+    currency, rate = parts
+    save_supplier_pricing(currency, rate)
+    with Session.begin() as db:
+        db.add(
+            Audit(
+                action="bot.supplier.currency", detail=f"currency={currency}; rate={rate}; admin={admin_id}"
+            )
+        )
+
+
 async def subs_screen(message, edit=False):
     items = subscription.channels()
     if items:
@@ -365,6 +454,11 @@ PROMPTS = {
     "markup": "Отправьте наценку в процентах, например <code>30</code>.",
     "credit": "Сколько начислить? Например <code>5</code> или <code>2.50</code>.",
     "debit": "Сколько списать? Например <code>1</code>.",
+    "currency": (
+        "Отправьте валюту кабинета api.cc и сколько долларов стоит 1 единица.\n"
+        "Например <code>CNY 0.14</code> или <code>RUB 0.011</code>.\n\n"
+        "🔴 После смены курса товары выключатся — проверьте цены и включите снова."
+    ),
     "channel": (
         "Отправьте @username канала, ссылку t.me/… или ID вида <code>-100…</code>.\n\n"
         "🔴 Сначала добавьте бота в канал администратором — иначе он не увидит подписчиков."
@@ -410,6 +504,8 @@ async def admin_callback(query: CallbackQuery, state: FSMContext):
                 if kind in ("price", "markup")
                 else "adm:subs"
                 if kind == "channel"
+                else "adm:setup"
+                if kind == "currency"
                 else f"adm:u:{target}",
                 "cancel",
                 "",
@@ -440,6 +536,26 @@ async def admin_callback(query: CallbackQuery, state: FSMContext):
                     )
                 )
             await user_card(message, user_id, edit=True)
+        elif action == "setup":
+            await setup_screen(message, edit=True)
+        elif action == "cur":
+            from app.preferences import save_supplier_pricing
+
+            save_supplier_pricing(parts[1], "1")
+            await setup_screen(message, edit=True, note="✅ Валюта сохранена.")
+        elif action == "sync":
+            from app.catalog_policy import US_LABELS
+            from app.supplier import sync_catalog
+
+            await show(message, "⚡️ <b>Импортируем каталог…</b>", [], edit=True)
+            count = 0
+            for category, label in US_LABELS.items():
+                count += await sync_catalog(category, label)
+            await setup_screen(
+                message,
+                edit=True,
+                note=f"✅ Импортировано товаров: {count}. Включите нужные в «Товары и цены».",
+            )
         elif action == "subs":
             await subs_screen(message, edit=True)
         elif action == "subdel":
@@ -489,6 +605,10 @@ async def admin_input(message: Message, state: FSMContext):
             set_price(int(target), kind, text, message.from_user.id)
             await state.set_state(None)
             await product(message, int(target))
+        elif kind == "currency":
+            set_currency(text, message.from_user.id)
+            await state.set_state(None)
+            await setup_screen(message, note="✅ Валюта сохранена.")
         elif kind == "channel":
             await subscription.add(message.bot, text, message.from_user.id)
             await state.set_state(None)
