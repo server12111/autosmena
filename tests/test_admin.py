@@ -102,7 +102,11 @@ def test_order_list_is_sorted_by_creation_time_not_random_id(database):
 def test_enabling_service_without_long_term_numbers_is_rejected(database, monkeypatch):
     from app import api
     from app.config import settings
+    from app.models import Product
     from app.supplier import Rejected
+
+    with database.begin() as db:
+        db.get(Product, 1).supplier_code = "2:74:1"
 
     class NoStock:
         async def check_rental_stock(self, code):
@@ -134,7 +138,7 @@ def test_renewal_review_requires_confirmation_and_preserves_wallet(database, mon
         db.add(
             Product(
                 id=2,
-                supplier_code="2:100:3",
+                supplier_code="2:74:3",
                 name="Renew",
                 country="US",
                 kind="renew",
@@ -153,7 +157,7 @@ def test_renewal_review_requires_confirmation_and_preserves_wallet(database, mon
                 status="active",
                 phone="+123",
                 supplier_id="remote-order",
-                supplier_payload=json.dumps({"id": 10, "app_id": 100, "cate_id": 2}),
+                supplier_payload=json.dumps({"id": 10, "app_id": 74, "cate_id": 2}),
             )
         )
     adjust_balance(123, 2000000, "fund", "test")

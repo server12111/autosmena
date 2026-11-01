@@ -25,8 +25,8 @@ def main():
             raise SystemExit("Seed is available only in demo mode")
         with Session.begin() as db:
             if not db.scalar(select(Product.id).limit(1)):
-                for country, code in [("США", "us"), ("Великобритания", "gb"), ("Канада", "ca")]:
-                    for name, service in [("Telegram", "tg"), ("WhatsApp", "wa")]:
+                for country, code in [("США", "us")]:
+                    for name, service in [("Telegram", "tg")]:
                         db.add(
                             Product(
                                 name=name + " · DEMO",

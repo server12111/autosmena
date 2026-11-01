@@ -3,6 +3,7 @@ import json
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
+from app.catalog_policy import permitted_code
 from app.db import Session
 from app.models import Audit, Ledger, Notice, Order, Payment, Product, User, now
 from app.money import display, sale_price
@@ -69,6 +70,8 @@ def reserve_order(user_id, product_id, request_key, expected_price, parent_id=No
             product = db.get(Product, product_id)
             if not product or not product.enabled:
                 raise ValueError("Товар недоступен")
+            if not permitted_code(product.supplier_code):
+                raise ValueError("Доступны только Telegram-номера США")
             if product.kind == "renew":
                 parent = db.get(Order, parent_id) if parent_id else None
                 if not parent or parent.user_id != user_id or parent.status not in ("active", "expired"):

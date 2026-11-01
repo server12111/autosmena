@@ -19,6 +19,16 @@ def prepare():
     directory = data_directory()
     directory.mkdir(parents=True, exist_ok=True)
     prepare_database(settings.resolved_database_url, settings.database_url)
+    from sqlalchemy import update
+
+    from app import db
+    from app.catalog_policy import allowed_codes
+    from app.models import Product
+
+    with db.Session.begin() as session:
+        session.execute(
+            update(Product).where(~Product.supplier_code.in_(allowed_codes())).values(enabled=False)
+        )
     settings.admin_password_hash = admin_password(directory, settings.admin_password_hash)
     # A mounted host directory may initially be root-owned. Drop privileges after bootstrap.
     if os.name != "nt" and os.geteuid() == 0:

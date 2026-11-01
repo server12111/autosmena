@@ -10,7 +10,7 @@ def test_supplier_currency_saved_in_db_without_rate_environment_variable(databas
 
     monkeypatch.setattr(settings, "apicc_usd_rate", "")
     with database.begin() as db:
-        db.get(Product, 1).supplier_code = "2:100:1"
+        db.get(Product, 1).supplier_code = "2:74:1"
     with TestClient(app) as client:
         csrf = client.post("/api/login", json={"password": "test-password-123"}).json()["csrf"]
         response = client.put(

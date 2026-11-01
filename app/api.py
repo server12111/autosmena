@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
+from app.catalog_policy import US_LABELS, allowed_codes, permitted_code
 from app.config import settings
 from app.db import Session
 from app.models import AdminSession, Audit, Ledger, Notice, Order, Payment, Product, User, now
@@ -184,6 +185,8 @@ def table(name: str, offset: int = 0, q: str = ""):
     if not model or offset < 0:
         raise HTTPException(404)
     statement = select(model)
+    if model is Product:
+        statement = statement.where(Product.supplier_code.in_(allowed_codes()))
     if q:
         q = q[:128]
         if model is Product:
@@ -213,8 +216,8 @@ class ProductChange(BaseModel):
 
 
 class CatalogSync(BaseModel):
-    category: int = Field(gt=0)
-    label: str = Field(min_length=1, max_length=64)
+    category: int | None = Field(default=None, gt=0)
+    label: str = Field(default="США", min_length=1, max_length=64)
 
 
 class SupplierPricing(BaseModel):
@@ -348,12 +351,15 @@ async def review_order(order_id: str, body: OrderReview):
 async def supplier_categories():
     if settings.demo_mode:
         raise ValueError("Категории доступны после отключения деморежима")
-    return await supplier.call("/api/v1/app/cate")
+    return {"list": [{"id": key, "name": value} for key, value in US_LABELS.items()], "total": len(US_LABELS)}
 
 
 @app.post("/api/supplier/sync", dependencies=[Depends(authenticated)])
 async def supplier_sync(body: CatalogSync):
-    return {"count": await sync_catalog(body.category, body.label)}
+    count = 0
+    for category in [body.category] if body.category is not None else US_LABELS:
+        count += await sync_catalog(category, body.label)
+    return {"count": count}
 
 
 @app.patch("/api/products/{product_id}", dependencies=[Depends(authenticated)])
@@ -364,6 +370,8 @@ async def product_change(product_id: int, body: ProductChange):
             if not product:
                 raise HTTPException(404)
             code = product.supplier_code
+        if not permitted_code(code):
+            raise ValueError("Можно включить только Telegram-номера США")
         try:
             await supplier.check_rental_stock(code)
         except Rejected as exc:

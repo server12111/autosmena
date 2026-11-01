@@ -47,6 +47,8 @@ async def rocket_call(method, path, body=None):
 def available_methods():
     if settings.demo_mode:
         return ["demo"]
+    if not settings.apicc_api_key:
+        return []
     return (
         (["cryptopay"] if settings.cryptopay_token else [])
         + (["xrocket"] if settings.xrocket_token else [])

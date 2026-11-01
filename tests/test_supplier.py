@@ -27,12 +27,12 @@ async def test_buy_uses_documented_request(supplier, monkeypatch):
         }
 
     monkeypatch.setattr(supplier, "call", call)
-    allocation = await supplier.allocate("2:100:1", "local-id")
+    allocation = await supplier.allocate("2:74:1", "local-id")
     path, body = calls[0]
     spec = json.loads((Path(__file__).parents[1] / "docs/apicc.openapi.json").read_text(encoding="utf-8-sig"))
     schema = spec["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"]
     assert set(schema["required"]) <= body.keys() <= schema["properties"].keys()
-    assert body == {"app_id": 100, "num": 1, "type": 1, "expiry": 5}
+    assert body == {"app_id": 74, "num": 1, "type": 1, "expiry": 5}
     assert allocation.external_id == "supplier-order"
     assert allocation.phone == "+123"
 
@@ -40,25 +40,25 @@ async def test_buy_uses_documented_request(supplier, monkeypatch):
 @pytest.mark.asyncio
 async def test_supplier_price_change_rejects_before_purchase(supplier, monkeypatch):
     async def catalog(*_):
-        return {"list": [{"id": 100, "price": "2.00", "num": 3}]}
+        return {"list": [{"id": 74, "name": "Telegram", "price": "2.00", "num": 3}]}
 
     monkeypatch.setattr(supplier, "catalog", catalog)
 
     async def call(path, body):
         assert path == "/api/v1/buy/prefix"
-        assert body == {"app_id": 100, "type": 1, "expiry": 5}
+        assert body == {"app_id": 74, "type": 1, "expiry": 5}
         return {"num": 1}
 
     monkeypatch.setattr(supplier, "call", call)
     with pytest.raises(Rejected):
-        await supplier.check_cost("2:100:1", 1000000)
-    await supplier.check_cost("2:100:1", 2000000)
+        await supplier.check_cost("2:74:1", 1000000)
+    await supplier.check_cost("2:74:1", 2000000)
 
 
 @pytest.mark.asyncio
 async def test_short_term_stock_cannot_pass_preflight(supplier, monkeypatch):
     async def catalog(*_):
-        return {"list": [{"id": 100, "price": "1.00", "num": 50}]}
+        return {"list": [{"id": 74, "name": "Telegram", "price": "1.00", "num": 50}]}
 
     async def call(path, body):
         assert body["expiry"] == 5
@@ -67,7 +67,7 @@ async def test_short_term_stock_cannot_pass_preflight(supplier, monkeypatch):
     monkeypatch.setattr(supplier, "catalog", catalog)
     monkeypatch.setattr(supplier, "call", call)
     with pytest.raises(Rejected, match="60"):
-        await supplier.check_cost("2:100:1", 1000000)
+        await supplier.check_cost("2:74:1", 1000000)
 
 
 @pytest.mark.asyncio
@@ -118,7 +118,7 @@ async def test_renewal_cannot_target_different_service(supplier, monkeypatch):
         called = True
 
     monkeypatch.setattr(supplier, "call", call)
-    order = SimpleNamespace(supplier_payload=json.dumps({"app_id": 100, "cate_id": 2, "id": 12}))
+    order = SimpleNamespace(supplier_payload=json.dumps({"app_id": 74, "cate_id": 2, "id": 12}))
     with pytest.raises(Rejected):
         await supplier.renew("2:999:3", order)
     assert not called
@@ -184,7 +184,7 @@ async def test_catalog_sync_disables_enabled_service_without_long_term_stock(dat
         ready = True
 
         async def catalog(self, category, card_type):
-            return {"list": [{"id": 100, "name": "Test service", "price": "1.00", "num": 50}]}
+            return {"list": [{"id": 74, "name": "Telegram", "price": "1.00", "num": 50}]}
 
         async def check_rental_stock(self, code):
             raise Rejected("Нет номеров больше 60 дней")
@@ -193,11 +193,11 @@ async def test_catalog_sync_disables_enabled_service_without_long_term_stock(dat
             return 1000000
 
     with database.begin() as db:
-        db.get(Product, 1).supplier_code = "2:100:1"
+        db.get(Product, 1).supplier_code = "2:74:1"
     monkeypatch.setattr(settings, "demo_mode", False)
     monkeypatch.setattr(module, "supplier", Catalog())
     assert await module.sync_catalog(2, "США") == 3
     with database() as db:
         product = db.get(Product, 1)
         assert product.enabled is False
-        assert product.country == "США"
+        assert product.country.startswith("США")

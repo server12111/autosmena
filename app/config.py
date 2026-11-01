@@ -32,8 +32,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def infer_demo(self):
-        if self.demo_mode is None:
-            self.demo_mode = not bool(self.apicc_api_key)
+        if hosted():
+            self.demo_mode = False
+        elif self.demo_mode is None:
+            self.demo_mode = False
         return self
 
     @property

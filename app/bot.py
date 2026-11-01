@@ -4,15 +4,18 @@ import logging
 import secrets
 import time
 from collections import defaultdict
+from html import escape
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ChatType
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
-from sqlalchemy import func, select
+from aiogram.types import CallbackQuery, Message
+from sqlalchemy import select
 
+from app.bot_ui import PROVIDER_LABELS, STATUS_LABELS, PremiumFallback, icon, keyboard, load_icons
+from app.catalog_policy import allowed_codes, permitted_code
 from app.config import settings
 from app.db import Session
 from app.models import Order, Payment, Product, User, now
@@ -31,26 +34,11 @@ class Deposit(StatesGroup):
     amount = State()
 
 
-def keyboard(rows):
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=label,
-                    **({"url": value} if value.startswith("https://") else {"callback_data": value}),
-                )
-                for label, value in row
-            ]
-            for row in rows
-        ]
-    )
-
-
 def menu():
     rows = [
-        [("📱 Купить номер", "catalog:0")],
-        [("💳 Баланс", "wallet"), ("📦 Мои заказы", "orders")],
-        [("Пополнения", "payments")],
+        [("Telegram · США", "catalog:0")],
+        [("Кошелёк", "wallet"), ("Мои номера", "orders")],
+        [("История пополнений", "payments")],
     ]
     if "your_support" not in settings.support_url:
         rows.append([("Поддержка", settings.support_url)])
@@ -61,9 +49,18 @@ async def send_menu(message, user_id):
     with Session() as db:
         user = db.get(User, user_id)
         balance = display(user.balance) if user else "0.00"
-    prefix = "🧪 ДЕМО — номера и SMS тестовые.\n\n" if settings.demo_mode else ""
+    prefix = "<b>Тестовый режим</b> · номера и SMS ненастоящие\n\n" if settings.demo_mode else ""
+    availability = (
+        ""
+        if settings.demo_mode or supplier.ready
+        else "\n<i>Магазин готовится к запуску. Покупки пока недоступны.</i>"
+    )
     await message.answer(
-        f"{prefix}SMENA · номера и SMS\nБаланс: ${balance}\n\nВыберите действие.", reply_markup=menu()
+        f"{prefix}{icon('brand')} <b>SMENA</b>\n<i>Telegram-номера США · +1</i>\n\n"
+        f"<blockquote>Ваш баланс\n<b>${balance} USD</b></blockquote>\n"
+        f"Номера со сроком <b>больше 60 дней</b>.\nВыберите действие ниже.{availability}",
+        parse_mode="HTML",
+        reply_markup=menu(),
     )
 
 
@@ -76,46 +73,40 @@ async def start(message: Message, state: FSMContext):
 
 def product_label(product):
     kind = {"new": "новый", "restart": "повторный", "renew": "продление"}[product.kind]
-    return f"{product.name[:40]} · {kind} · ${display(sale_price(product))}"
+    return f"Telegram +1 · {kind} · ${display(sale_price(product))}"
 
 
 async def catalog(message, offset=0, country_id=None):
-    if country_id is None:
-        with Session() as db:
-            countries = db.execute(
-                select(Product.country, func.min(Product.id))
-                .where(Product.enabled.is_(True), Product.kind != "renew")
-                .group_by(Product.country)
-                .order_by(Product.country)
-            ).all()
-        rows = [[(country, f"country:{product_id}")] for country, product_id in countries]
-        rows.append([("Главное меню", "home")])
-        await message.answer("Выберите страну.\nПоиск: /search название сервиса", reply_markup=keyboard(rows))
-        return
+    offset = max(0, offset)
     with Session() as db:
-        representative = db.get(Product, country_id)
-        if not representative:
-            raise ValueError("Страна не найдена")
         products = db.scalars(
             select(Product)
             .where(
-                Product.enabled.is_(True), Product.kind != "renew", Product.country == representative.country
+                Product.enabled.is_(True), Product.kind != "renew", Product.supplier_code.in_(allowed_codes())
             )
-            .order_by(Product.name)
+            .order_by(Product.cost, Product.id)
             .offset(offset)
             .limit(11)
         ).all()
-    rows = [[(product_label(p), f"product:{p.id}")] for p in products[:10]]
-    nav = []
-    if offset > 0:
-        nav.append(("← Назад", f"catalog:{max(0, offset - 10)}:{country_id}"))
+    rows = [[(product_label(product), f"product:{product.id}")] for product in products[:10]]
+    navigation = []
+    if offset:
+        navigation.append(("← Назад", f"catalog:{max(0, offset - 10)}"))
     if len(products) > 10:
-        nav.append(("Далее →", f"catalog:{offset + 10}:{country_id}"))
-    if nav:
-        rows.append(nav)
-    rows.append([("Все страны", "catalog:0"), ("Главное меню", "home")])
+        navigation.append(("Далее →", f"catalog:{offset + 10}"))
+    if navigation:
+        rows.append(navigation)
+    rows.append([("Главное меню", "home")])
+    description = (
+        "Выберите подходящий номер ниже."
+        if products
+        else "Сейчас доступных номеров нет. Загляните немного позже."
+    )
     await message.answer(
-        "Выберите сервис:" if products else "Каталог пока пуст.", reply_markup=keyboard(rows)
+        f"{icon('catalog')} <b>Telegram · США</b>\n"
+        f"Номера +1 со сроком <b>больше 60 дней</b>.\n\n{description}",
+        parse_mode="HTML",
+        reply_markup=keyboard(rows),
     )
 
 
@@ -128,6 +119,9 @@ async def orders(message, user_id, offset=0, order_id=None):
         rows = db.scalars(
             statement.order_by(Order.created_at.desc(), Order.id.desc()).offset(offset).limit(11)
         ).all()
+        archive = {
+            order.id: not permitted_code(db.get(Product, order.product_id).supplier_code) for order in rows
+        }
     if not rows:
         await message.answer("Заказов пока нет.", reply_markup=menu())
     for order in rows[:10]:
@@ -145,13 +139,13 @@ async def orders(message, user_id, offset=0, order_id=None):
             and (parsed.hostname == "api.cc" or parsed.hostname.endswith(".api.cc"))
         ):
             buttons.insert(0, [("Открыть приём SMS", url)])
-        if order.status in ("active", "expired") and not order.parent_id:
+        if order.status in ("active", "expired") and not order.parent_id and not archive[order.id]:
             buttons.append([("Продлить номер", "renew:" + order.id)])
         extra = ""
         if payload:
             extra = f"\nДействует до: {payload.get('end_time', '—')}\nSMS: {payload.get('sms_count', 0)}"
         await message.answer(
-            f"Заказ {order.id[:8]} · {order.status}\n{order.phone}\n"
+            f"{'Архивный заказ' if archive[order.id] else 'Telegram · США'}\n{order.phone}\nЗаказ {order.id[:8]} · {STATUS_LABELS.get(order.status, order.status)}\n"
             f"${display(order.price)}{extra}\n{order.sms or order.error}",
             reply_markup=keyboard(buttons),
         )
@@ -197,7 +191,7 @@ async def payment_message(message, payment):
         if payable and payment.url.startswith("https://"):
             rows.append([("Оплатить", payment.url)])
         rows.append([("Проверить оплату", "checkpay:" + payment.id)])
-    text = f"Счёт {payment.id[:8]} · {payment.provider}\nНа баланс: ${display(payment.amount)}\nСтатус: {payment.status}"
+    text = f"{PROVIDER_LABELS.get(payment.provider, payment.provider)} · счёт {payment.id[:8]}\nНа баланс: ${display(payment.amount)} USD\n{STATUS_LABELS.get(payment.status, payment.status)}"
     if payment.provider == "ton" and payable:
         text += (
             f"\n\nОтправьте ровно {payment.crypto_amount} TON\nСеть: "
@@ -223,25 +217,10 @@ async def orders_command(message: Message):
     await orders(message, message.from_user.id)
 
 
-@router.message(Command("search"))
+@router.message(Command("search", "catalog"))
 async def search_command(message: Message):
-    query = (message.text or "").partition(" ")[2].strip()[:100]
-    if not query:
-        await message.answer("Напишите /search Google или /search Telegram США")
-        return
-    statement = select(Product).where(Product.enabled.is_(True), Product.kind != "renew")
-    for term in query.split()[:5]:
-        statement = statement.where(
-            Product.name.icontains(term, autoescape=True) | Product.country.icontains(term, autoescape=True)
-        )
-    with Session() as db:
-        products = db.scalars(statement.order_by(Product.country, Product.name).limit(21)).all()
-    rows = [[(p.country + " · " + product_label(p), f"product:{p.id}")] for p in products[:20]]
-    rows.append([("Все страны", "catalog:0")])
-    text = "Результаты поиска:" if products else "Ничего не найдено. Попробуйте другое название."
-    if len(products) > 20:
-        text += "\nПоказаны первые 20. Уточните страну или название."
-    await message.answer(text, reply_markup=keyboard(rows))
+    # Keep old /search links working, but this is now a single-service store.
+    await catalog(message)
 
 
 @router.message(Command("payments"))
@@ -278,14 +257,18 @@ async def callback(query: CallbackQuery, state: FSMContext):
         elif data.startswith("product:"):
             with Session() as db:
                 product = db.get(Product, int(data.split(":")[1]))
-                if not product or not product.enabled:
+                if not product or not product.enabled or not permitted_code(product.supplier_code):
                     raise ValueError("Товар недоступен")
                 price = sale_price(product)
             token = secrets.token_hex(12)
             await message.answer(
-                f"{product.name} · {product.country}\n"
-                f"Тип: {'первичный номер' if product.kind == 'new' else 'повторное использование'}\nЦена: ${display(price)}\n"
-                f"Остаток срока: {RENTAL_LABEL}. Автоматической отмены и возврата после выдачи номера нет.\nСредства будут списаны с баланса после подтверждения.",
+                f"{icon('brand')} <b>Telegram · США</b>\n\n"
+                "Виртуальный номер +1\n"
+                f"Тип: {'первичный' if product.kind == 'new' else 'повторное использование'}\n"
+                f"Остаток срока: {escape(RENTAL_LABEL)}\n\n"
+                f"<blockquote>Стоимость\n<b>${display(price)} USD</b></blockquote>\n"
+                "Номер появится после подтверждения.\n<i>После выдачи автоматической отмены и возврата нет.</i>",
+                parse_mode="HTML",
                 reply_markup=keyboard(
                     [
                         [("Подтвердить покупку", f"buy:{product.id}:{price}:{token}")],
@@ -352,9 +335,25 @@ async def callback(query: CallbackQuery, state: FSMContext):
         elif data == "wallet":
             with Session() as db:
                 user = db.get(User, user_id)
-            rows = [[(name, "deposit:" + name)] for name in available_methods()]
+            rows = [
+                [
+                    (
+                        {
+                            "cryptopay": "Crypto Bot",
+                            "xrocket": "xRocket",
+                            "ton": "TON · прямой перевод",
+                            "demo": "Тестовое пополнение",
+                        }[name],
+                        "deposit:" + name,
+                    )
+                ]
+                for name in available_methods()
+            ]
             await message.answer(
-                f"Баланс: ${display(user.balance)}\nВыберите способ пополнения:",
+                f"{icon('wallet')} <b>Кошелёк</b>\n\n"
+                f"<blockquote>Доступно\n<b>${display(user.balance)} USD</b></blockquote>\n"
+                + ("Выберите способ пополнения:" if rows else "Пополнение временно недоступно."),
+                parse_mode="HTML",
                 reply_markup=keyboard(rows + [[("Главное меню", "home")]]),
             )
         elif data.startswith("deposit:"):
@@ -368,7 +367,7 @@ async def callback(query: CallbackQuery, state: FSMContext):
             await payments(message, user_id, int(data.split(":")[1]) if ":" in data else 0)
         elif data.startswith("checkpay:"):
             status = await check_payment(data.split(":")[1], user_id)
-            await message.answer("Статус оплаты: " + status)
+            await message.answer("Статус оплаты: " + STATUS_LABELS.get(status, status))
     except ValueError as exc:
         await message.answer(str(exc))
     except Exception as exc:
@@ -394,12 +393,14 @@ async def run():
     if not settings.bot_token:
         raise SystemExit("Set BOT_TOKEN in .env")
     bot, dispatcher = Bot(settings.bot_token), Dispatcher()
+    bot.session.middleware(PremiumFallback())
+    await load_icons(bot)
     dispatcher.include_router(router)
     await bot.set_my_commands(
         [
             {"command": "start", "description": "Главное меню"},
             {"command": "orders", "description": "Мои заказы"},
-            {"command": "search", "description": "Поиск сервиса и страны"},
+            {"command": "catalog", "description": "Telegram-номера США"},
             {"command": "payments", "description": "Пополнения"},
             {"command": "cancel", "description": "Отменить ввод"},
         ]

@@ -114,11 +114,8 @@ function recoverPayment(row) {
   openDialog('Сверка пополнения',[info,reference,id],{type:'paymentRecovery',row});
 }
 $('import-catalog').onclick=async()=>{
-  const category=field('ID категории api.cc','category','number','2');category.lastChild.min=1;category.lastChild.required=true;
-  const label=field('Название страны / категории в боте','label','text','');label.lastChild.required=true;label.lastChild.maxLength=64;
-  const info=el('p','Импорт обновляет себестоимость. Новые товары отключены: проверьте цену и включите нужные.');
-  const categories=action('Показать категории api.cc',async()=>{const data=await api('supplier/categories');info.textContent=JSON.stringify(data,null,2);info.style.whiteSpace='pre-wrap';});
-  openDialog('Импорт каталога',[info,categories,category,label],{type:'import'});
+  const info=el('p','Обновятся только виртуальные Telegram-номера США — проект с закупочной ценой $0.30, включая повторное использование и продление. Фильтр срока — больше 60 дней. Новые позиции отключены до проверки вашей цены.');
+  openDialog('Telegram · США',[info],{type:'import'});
 };
 $('supplier-currency').onclick=async()=>{
   try {
@@ -139,7 +136,7 @@ $('edit-form').onsubmit=async event=>{event.preventDefault();const button=$('sav
   else if(currentEdit.type==='review') await api('orders/'+currentEdit.row.id+'/review','POST',{action:data.get('reviewAction'),reason:data.get('reason'),supplier_order:data.get('supplierOrder'),refund_confirmed:data.get('confirmed')==='on',renewal_confirmed:data.get('confirmed')==='on'});
   else if(currentEdit.type==='paymentRecovery') await api('payments/'+currentEdit.row.id+'/recover','POST',{external_id:data.get('externalId')});
   else if(currentEdit.type==='supplierCurrency') await api('supplier/pricing','PUT',{currency:data.get('currency'),usd_rate:data.get('rate')});
-  else await api('supplier/sync','POST',{category:Number(data.get('category')),label:data.get('label')});
+  else await api('supplier/sync','POST',{});
   $('edit-dialog').close();await load();toast('Изменения сохранены');
 }catch(error){$('dialog-error').textContent=error.message;}finally{button.disabled=false;}};
 enter().catch(()=>showLogin());
