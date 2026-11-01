@@ -1,9 +1,11 @@
 import json
 from hashlib import sha256
+from html import escape
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
+from app.bot_ui import format_phone
 from app.catalog_policy import permitted_code
 from app.db import Session
 from app.models import Audit, Ledger, Notice, Order, Payment, Product, User, now
@@ -117,7 +119,7 @@ def refund_order(db, order, reason):
         Notice(
             user_id=order.user_id,
             event="refund:" + order.id,
-            text=f"Заказ {order.id[:8]} отменён. Возвращено ${display(order.price)}.",
+            text=f"↩️ Заказ {order.id[:8]} отменён. <b>${display(order.price)}</b> возвращены на баланс.",
         )
     )
 
@@ -172,8 +174,11 @@ async def allocate_order(order_id):
                 Notice(
                     user_id=order.user_id,
                     event="allocated:" + order.id,
-                    text=f"Номер: {order.phone}\nЗаказ {order.id[:8]} "
-                    + ("продлён." if parent else "готов."),
+                    text=(
+                        f"🟢 <b>Номер {'продлён' if parent else 'готов'}</b>\n\n"
+                        f"<code>{escape(format_phone(order.phone))}</code>\n"
+                        + ("" if parent else "Запросите код в Telegram — он придёт в этот чат.")
+                    ),
                 )
             )
 
@@ -215,7 +220,7 @@ async def refresh_order(order_id, user_id=None, cancel=False):
                 Notice(
                     user_id=order.user_id,
                     event="sms:" + order.id,
-                    text=f"SMS для {order.phone}:\n{state.sms}",
+                    text=sms_text(order.phone, state.sms),
                 )
             )
         elif target == "refunding":
@@ -237,7 +242,7 @@ async def refresh_order(order_id, user_id=None, cancel=False):
                         Notice(
                             user_id=order.user_id,
                             event=event,
-                            text=f"Код Telegram для {order.phone}:\n{state.sms}",
+                            text=sms_text(order.phone, state.sms),
                         )
                     )
             elif count > seen_count:
@@ -245,9 +250,22 @@ async def refresh_order(order_id, user_id=None, cancel=False):
                     Notice(
                         user_id=order.user_id,
                         event=f"sms-count:{order.id}:{count}",
-                        text=f"Новые SMS для {order.phone}. Всего: {count}. Код появится в этом чате после обработки.",
+                        text=f"💬 Новое SMS на <code>{escape(format_phone(order.phone))}</code>. Код появится здесь после обработки.",
                     )
                 )
+
+
+def sms_text(phone, code):
+    return (
+        f"💬 <b>Код входа в Telegram</b>\n\n<code>{escape(code)}</code>\n\n"
+        f"Номер: <code>{escape(format_phone(phone))}</code>\n<i>Нажмите на код, чтобы скопировать.</i>"
+    )
+
+
+def mark_notice_sent(event):
+    """The bot already showed this result on screen; skip the duplicate notification."""
+    with Session.begin() as db:
+        db.execute(update(Notice).where(Notice.event == event).values(sent=True))
 
 
 def credit_payment(payment_id, transaction_hash=None):
@@ -266,7 +284,7 @@ def credit_payment(payment_id, transaction_hash=None):
             Notice(
                 user_id=payment.user_id,
                 event="payment:" + payment.id,
-                text=f"Баланс пополнен на ${display(payment.amount)}.",
+                text=f"✅ <b>Баланс пополнен на ${display(payment.amount)}</b>\n\nТеперь можно купить номер.",
             )
         )
         return True

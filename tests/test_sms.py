@@ -115,7 +115,10 @@ async def test_new_codes_are_sent_in_chat_once_without_ending_rental(database, m
     await worker.cycle(bot)
     await worker.cycle(bot)
     assert bot.send_message.await_count == 1
-    assert bot.send_message.call_args.args == (123, "Код Telegram для +123:\n01234")
+    assert bot.send_message.call_args.args[0] == 123
+    assert "<code>01234</code>" in bot.send_message.call_args.args[1]
+    copy = bot.send_message.call_args.kwargs["reply_markup"].inline_keyboard[0][0]
+    assert copy.copy_text.text == "01234"
     # The same digits in a later SMS are still a new message.
     state = State("active", sms="01234", payload={"sms_count": 2, "_sms_code_time": "time-2"})
     await worker.cycle(bot)
@@ -154,7 +157,8 @@ async def test_failed_sms_check_keeps_order_and_retries_later(database, monkeypa
     await worker.cycle(bot)
     assert not bot.send_message.await_count
     await worker.cycle(bot)
-    bot.send_message.assert_awaited_once_with(123, "Код Telegram для +123:\n54321")
+    bot.send_message.assert_awaited_once()
+    assert "<code>54321</code>" in bot.send_message.call_args.args[1]
 
 
 @pytest.mark.asyncio

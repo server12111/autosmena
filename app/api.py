@@ -3,6 +3,7 @@ import secrets
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
+from html import escape
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -311,7 +312,7 @@ async def review_order(order_id: str, body: OrderReview):
                     Notice(
                         user_id=order.user_id,
                         event="review-renewed:" + order.id,
-                        text=f"Продление {parent.phone} подтверждено после сверки. Новый срок: {state.payload['end_time']}.",
+                        text=f"✅ Продление {escape(parent.phone)} подтверждено. Новый срок: {escape(str(state.payload['end_time']))}.",
                     )
                 )
     else:
@@ -342,7 +343,7 @@ async def review_order(order_id: str, body: OrderReview):
                     Notice(
                         user_id=order.user_id,
                         event="review-attached:" + order.id,
-                        text=f"Заказ {order.id[:8]} восстановлен после сверки. Номер: {item['tel']}. Подробности в /orders.",
+                        text=f"✅ Заказ {order.id[:8]} восстановлен после сверки. Номер: <code>{escape(str(item['tel']))}</code>.",
                     )
                 )
     return {"ok": True}

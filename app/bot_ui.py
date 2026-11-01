@@ -5,7 +5,7 @@ import re
 
 from aiogram.client.session.middlewares.base import BaseRequestMiddleware
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
 
 ICONS = {}
 STATUS_LABELS = {
@@ -15,8 +15,8 @@ STATUS_LABELS = {
     "review": "На проверке",
     "reserved": "Принят",
     "allocating": "Получаем номер",
-    "waiting": "Ожидание SMS",
-    "active": "Номер активен",
+    "waiting": "Активен",
+    "active": "Активен",
     "expired": "Срок истёк",
     "completed": "Завершён",
     "refunded": "Возврат на баланс",
@@ -35,55 +35,82 @@ FALLBACK = {
     "payments": "🧾",
     "confirm": "✅",
     "cancel": "✖️",
+    "copy": "📋",
+    "refresh": "🔄",
+    "support": "💬",
+}
+STATUS_ICONS = {
+    "reserved": "⏳",
+    "allocating": "⏳",
+    "waiting": "🟢",
+    "active": "🟢",
+    "expired": "⚪️",
+    "completed": "✅",
+    "refunded": "↩️",
+    "review": "🟡",
+    "creating": "⏳",
+    "pending": "🟡",
+    "paid": "✅",
+}
+# Telegram forum-topic stickers are the only custom emoji a bot can rely on. Only exact
+# matches are used: a random icon on a button looks broken.
+ICON_CHOICES = {
+    "brand": ["✈️", "✈", "⭐️", "⭐"],
+    "catalog": ["📱", "📲"],
+    "wallet": ["💳", "💰", "💵"],
+    "orders": ["📂", "📁", "🗂"],
+    "payments": ["🧾", "📝"],
+    "confirm": ["✅", "✔️"],
+    "cancel": ["❌", "✖️"],
+    "copy": ["📋"],
+    "refresh": ["🔄", "🔁"],
+    "support": ["💬", "🗨"],
 }
 
 
 def role_for(value):
     action = value.split(":", 1)[0]
-    if action in ("buy", "renewbuy"):
+    if action in ("buy", "renewbuy", "amount"):
         return "confirm"
     if action in ("cancel", "cancelask"):
         return "cancel"
-    if action in ("catalog", "country", "product"):
+    if action in ("product",):
         return "catalog"
-    if action in ("wallet", "deposit"):
+    if action in ("deposit",):
         return "wallet"
-    if action in ("orders", "order", "renew"):
+    if action == "order":
         return "orders"
-    if action in ("payments", "checkpay"):
+    if action in ("checkpay", "pay"):
         return "payments"
+    if action == "sms":
+        return "refresh"
     return None
 
 
+STYLES = {"cancel": "danger", "confirm": "success", "wallet": "success", "catalog": "primary"}
+
+
+def button(label, value, role=None):
+    """role=None picks a role from the callback; role="plain" draws a neutral button."""
+    if role is None:
+        role = role_for(value)
+    if role == "plain":
+        role = None
+    if role == "copy":
+        options = {"copy_text": CopyTextButton(text=value[:256])}
+    elif value.startswith(("https://", "http://", "tg://")):
+        options = {"url": value}
+    else:
+        options = {"callback_data": value}
+    if role in ICONS:
+        options["icon_custom_emoji_id"] = ICONS[role]
+    elif role in FALLBACK and not any(label.startswith(icon) for icon in FALLBACK.values()):
+        label = FALLBACK[role] + " " + label
+    return InlineKeyboardButton(text=label, style=STYLES.get(role), **options)
+
+
 def keyboard(rows):
-    output = []
-    for row in rows:
-        buttons = []
-        for label, value in row:
-            role = role_for(value)
-            if value.startswith("https://") and label == "Оплатить":
-                role = "confirm"
-            style = (
-                "danger"
-                if role == "cancel"
-                else "success"
-                if role in ("confirm", "wallet")
-                else "primary"
-                if role == "catalog"
-                else None
-            )
-            options = (
-                {"url": value}
-                if value.startswith(("https://", "http://", "tg://"))
-                else {"callback_data": value}
-            )
-            if role in ICONS:
-                options["icon_custom_emoji_id"] = ICONS[role]
-            elif role and not any(label.startswith(icon) for icon in FALLBACK.values()):
-                label = FALLBACK[role] + " " + label
-            buttons.append(InlineKeyboardButton(text=label, style=style, **options))
-        output.append(buttons)
-    return InlineKeyboardMarkup(inline_keyboard=output)
+    return InlineKeyboardMarkup(inline_keyboard=[[button(*item) for item in row] for row in rows if row])
 
 
 def icon(role):
@@ -100,27 +127,32 @@ async def load_icons(bot):
         ]
         if not stickers:
             return
-        choices = {
-            "brand": ["✈️", "✈", "⭐️", "⭐"],
-            "catalog": ["📱", "🔵"],
-            "wallet": ["💳", "💰", "🟢"],
-            "orders": ["📂", "📁", "🟣"],
-            "payments": ["🧾", "💵", "🟡"],
-            "confirm": ["✅", "🟢"],
-            "cancel": ["❌", "🔴"],
-        }
-        for index, (role, emoji) in enumerate(choices.items()):
-            selected = next((s for s in stickers if s.emoji in emoji), stickers[index % len(stickers)])
-            ICONS[role] = selected.custom_emoji_id
+        for role, emoji in ICON_CHOICES.items():
+            selected = next((s for s in stickers if s.emoji in emoji), None)
+            if selected:
+                ICONS[role] = selected.custom_emoji_id
     except Exception:
         logging.getLogger("smena.bot").warning("Premium icons unavailable; using standard emoji")
+
+
+NOT_EMOJI_ERRORS = (
+    "message is not modified",
+    "message to edit not found",
+    "message can't be edited",
+    "query is too old",
+    "chat not found",
+    "bot was blocked",
+)
 
 
 class PremiumFallback(BaseRequestMiddleware):
     async def __call__(self, make_request, bot, method):
         try:
             return await make_request(bot, method)
-        except TelegramBadRequest:
+        except TelegramBadRequest as error:
+            # Ordinary edit errors must not disable premium icons for every later message.
+            if any(text in str(error).lower() for text in NOT_EMOJI_ERRORS):
+                raise
             changes = {}
             markup = getattr(method, "reply_markup", None)
             if isinstance(markup, InlineKeyboardMarkup) and any(
@@ -144,3 +176,22 @@ class PremiumFallback(BaseRequestMiddleware):
                 "Telegram rejected premium markup; retrying with standard icons"
             )
             return await make_request(bot, method.model_copy(update=changes))
+
+
+def format_phone(phone):
+    """+17752953734 -> +1 775 295 3734; anything unexpected is shown as is."""
+    digits = re.sub(r"\D", "", phone or "")
+    if len(digits) == 11 and digits.startswith("1"):
+        return f"+1 {digits[1:4]} {digits[4:7]} {digits[7:]}"
+    return phone or "—"
+
+
+def copy_phone(phone):
+    digits = re.sub(r"\D", "", phone or "")
+    return "+" + digits if digits else ""
+
+
+def format_date(value):
+    """Supplier dates look like 2027-01-26 12:00:00; customers read 26.01.2027."""
+    match = re.match(r"(\d{4})-(\d{2})-(\d{2})", str(value or ""))
+    return f"{match[3]}.{match[2]}.{match[1]}" if match else str(value or "")

@@ -1,9 +1,13 @@
 import asyncio
 import logging
+import re
+from html import unescape
 
+from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy import select
 
 from app import webhooks
+from app.bot_ui import keyboard
 from app.config import settings
 from app.db import Session
 from app.models import Notice, Order, Payment, now
@@ -51,12 +55,40 @@ async def send_notices(bot):
             ).all()
         for notice in notices:
             try:
-                await bot.send_message(notice.user_id, notice.text)
+                await deliver(bot, notice)
             except Exception as exc:
                 log.warning("Notification failed: id=%s type=%s", notice.id, type(exc).__name__)
             else:
                 with Session.begin() as db:
                     db.get(Notice, notice.id).sent = True
+
+
+def notice_buttons(event, text):
+    kind, _, rest = event.partition(":")
+    order_id = rest.split(":")[0]
+    if kind == "sms":
+        code = re.search(r"<code>([^<]+)</code>", text)
+        rows = [[("Скопировать код", unescape(code[1]), "copy")]] if code else []
+        return rows + [[("Открыть номер", "card:" + order_id)]]
+    if kind in ("allocated", "review-attached", "review-renewed", "sms-count"):
+        return [[("Открыть номер", "card:" + order_id)]]
+    if kind == "payment":
+        return [[("Купить номер", "catalog:0", "catalog")]]
+    if kind == "refund":
+        return [[("Мои номера", "orders", "orders")]]
+    return []
+
+
+async def deliver(bot, notice):
+    rows = notice_buttons(notice.event, notice.text)
+    markup = keyboard(rows) if rows else None
+    try:
+        await bot.send_message(notice.user_id, notice.text, parse_mode="HTML", reply_markup=markup)
+    except TelegramBadRequest as error:
+        if "parse" not in str(error).lower() and "entit" not in str(error).lower():
+            raise
+        # Old queued notices may predate HTML formatting.
+        await bot.send_message(notice.user_id, re.sub(r"</?\w+>", "", notice.text), reply_markup=markup)
 
 
 async def run():

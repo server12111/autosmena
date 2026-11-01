@@ -33,7 +33,7 @@ async def test_supplier_reception_links_never_appear_in_customer_messages(databa
             )
         )
     message = SimpleNamespace(answer=AsyncMock())
-    await bot.orders(message, 123)
+    await bot.order_card(message, 123, "f" * 32)
     markup = message.answer.call_args_list[0].kwargs["reply_markup"]
     urls = [button.url for row in markup.inline_keyboard for button in row if button.url]
     assert not urls
@@ -60,19 +60,18 @@ async def test_old_orders_remain_accessible_after_ten_newer_orders(database):
             )
     message = SimpleNamespace(answer=AsyncMock())
     await bot.orders(message, 123, offset=10)
-    assert "+1000\n" in message.answer.call_args_list[0].args[0]
-    navigation = message.answer.call_args_list[-1].kwargs["reply_markup"]
-    assert navigation.inline_keyboard[0][0].callback_data == "orders:0"
+    markup = message.answer.call_args.kwargs["reply_markup"].inline_keyboard
+    assert markup[0][0].callback_data == "order:" + f"{0:032x}"
+    assert markup[1][0].callback_data == "orders:0"
 
 
 @pytest.mark.asyncio
 async def test_navigation_cancels_amount_entry(database):
-    message = SimpleNamespace(answer=AsyncMock())
     query = SimpleNamespace(
         answer=AsyncMock(),
         from_user=SimpleNamespace(id=123, username="tester"),
         data="catalog:0",
-        message=message,
+        message=SimpleNamespace(answer=AsyncMock(), edit_text=AsyncMock()),
     )
     state = SimpleNamespace(set_state=AsyncMock())
     bot.last_action.clear()
@@ -100,3 +99,98 @@ async def test_settled_or_expired_ton_invoice_does_not_request_another_transfer(
     text = message.answer.call_args.args[0]
     assert "Отправьте" not in text
     assert "ton://transfer" not in text
+
+
+def query(data, message=None):
+    return SimpleNamespace(
+        answer=AsyncMock(),
+        from_user=SimpleNamespace(id=123, username="tester"),
+        data=data,
+        message=message or SimpleNamespace(answer=AsyncMock(), edit_text=AsyncMock()),
+    )
+
+
+class FakeState:
+    def __init__(self):
+        self.data, self.state = {}, None
+
+    async def set_state(self, value):
+        self.state = value
+
+    async def update_data(self, **values):
+        self.data.update(values)
+
+    async def get_data(self):
+        return dict(self.data)
+
+    async def clear(self):
+        self.data, self.state = {}, None
+
+
+def buttons(mock):
+    markup = mock.call_args.kwargs["reply_markup"]
+    return [
+        b.callback_data or (b.copy_text and b.copy_text.text) or b.url
+        for r in markup.inline_keyboard
+        for b in r
+    ]
+
+
+@pytest.mark.asyncio
+async def test_purchase_flow_edits_one_message_until_number_card(database):
+    from app.models import User
+
+    with database.begin() as db:
+        db.get(User, 123).balance = 2000000
+    bot.last_action.clear()
+    event = query("product:1")
+    await bot.callback(event, FakeState())
+    buy = next(b for b in buttons(event.message.edit_text) if b.startswith("buy:"))
+    assert not event.message.answer.await_count
+    bot.last_action.clear()
+    event = query(buy)
+    await bot.callback(event, FakeState())
+    text = event.message.edit_text.call_args.args[0]
+    assert "<code>+1 555" in text and "Добавить аккаунт" in text
+    assert any(b and b.startswith("+1555") for b in buttons(event.message.edit_text))
+    assert not event.message.answer.await_count
+    with database() as db:
+        from app.models import Notice
+
+        assert db.get(User, 123).balance == 1000000
+        # The card is already on screen: no duplicate "number ready" notification.
+        assert all(n.sent for n in db.query(Notice).all())
+
+
+@pytest.mark.asyncio
+async def test_insufficient_balance_offers_top_up_instead_of_buy(database):
+    with database.begin() as db:
+        from app.models import User
+
+        db.get(User, 123).balance = 0
+    bot.last_action.clear()
+    event = query("product:1")
+    await bot.callback(event, FakeState())
+    assert "wallet" in buttons(event.message.edit_text)
+    assert not any(b.startswith("buy:") for b in buttons(event.message.edit_text))
+
+
+@pytest.mark.asyncio
+async def test_quick_amount_creates_invoice(database):
+    bot.last_action.clear()
+    state = FakeState()
+    event = query("deposit:demo")
+    await bot.callback(event, state)
+    assert "amount:demo:5" in buttons(event.message.edit_text)
+    bot.last_action.clear()
+    event = query("amount:demo:5")
+    await bot.callback(event, state)
+    assert "$5.00" in event.message.edit_text.call_args.args[0]
+    assert state.state is None
+
+
+@pytest.mark.asyncio
+async def test_free_text_shows_menu(database):
+    message = SimpleNamespace(answer=AsyncMock(), from_user=SimpleNamespace(id=123, username="tester"))
+    await bot.anything_else(message, FakeState())
+    assert "SMENA" in message.answer.call_args.args[0]
