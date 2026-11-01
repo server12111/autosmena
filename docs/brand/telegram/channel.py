@@ -1,0 +1,46 @@
+import json
+HEAD = """<!doctype html><html><head><meta charset="utf-8"><style>*{margin:0;padding:0;box-sizing:border-box}
+body{width:1280px;height:720px;overflow:hidden;font-family:'Inter Display','Inter',sans-serif;-webkit-font-smoothing:antialiased}
+.bg{width:1280px;height:720px;position:relative;overflow:hidden;color:#fff;background:radial-gradient(90% 120% at 10% 0%,#24408A 0%,#1A2A5E 45%,#0E1838 100%)}
+.glowr{position:absolute;right:-120px;top:-60px;width:820px;height:820px;border-radius:50%;background:radial-gradient(circle,rgba(42,171,238,.25),transparent 62%)}
+.glass{background:linear-gradient(135deg,rgba(255,255,255,.16),rgba(255,255,255,.05));border:1.5px solid rgba(255,255,255,.24);box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 30px 60px rgba(4,10,35,.45);backdrop-filter:blur(16px)}
+.left{position:absolute;left:90px;top:50%;transform:translateY(-50%)}
+.word{font-weight:900;font-size:136px;letter-spacing:-4px;line-height:1;margin-left:-6px}
+.uline{margin-top:24px;width:240px;height:16px;border-radius:8px;background:linear-gradient(90deg,#E63946,#FF7A6B)}
+.sub{margin-top:30px;font-size:34px;font-weight:700;color:#DCE6F7}
+.muted{color:#93A3C2}
+@@CSS@@</style></head><body><div class="bg"><div class="glowr"></div>@@BODY@@</div></body></html>"""
+out = {}
+def page(name, css, body):
+    open(name + '.html', 'w').write(HEAD.replace('@@CSS@@', css).replace('@@BODY@@', body)); out[name] = [1280, 720]
+
+AVA = '<div class="av">S<i></i></div>'
+FEED_CSS = """
+.feed{position:absolute;right:60px;top:50%;transform:translateY(-50%);width:540px;display:flex;flex-direction:column;gap:18px}
+.post{display:flex;gap:18px;align-items:flex-start;padding:22px 24px;border-radius:26px}
+.av{flex:none;position:relative;width:58px;height:58px;border-radius:18px;background:linear-gradient(135deg,#5AC8FA,#1272D6);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:30px}
+.av i{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;background:#E63946;border:3px solid #1A2A5E}
+.t{font-weight:800;font-size:22px;white-space:nowrap}.d{margin-top:6px;font-size:17px;color:#A9B8D6;font-weight:500;white-space:nowrap}
+.time{margin-left:auto;font-size:15px;color:#7D8DAD;font-weight:600;white-space:nowrap}
+.p2{margin-left:30px}.p3{margin-left:10px}
+"""
+
+# A — channel feed: three glass posts
+page("tgk_feed", FEED_CSS, f"""<div class="left"><div class="word">SMENA</div><div class="uline"></div><div class="sub">Новости · наличие · инструкции</div></div>
+<div class="feed">
+<div class="glass post">{AVA}<div><div class="t">⚡ Номера снова в наличии</div><div class="d">Telegram США +1 · 60+ дней</div></div><div class="time">12:04</div></div>
+<div class="glass post p2">{AVA}<div><div class="t">⭐ Рефералы 5%</div><div class="d">С каждого пополнения друзей</div></div><div class="time">вчера</div></div>
+<div class="glass post p3">{AVA}<div><div class="t">📣 API для реселлеров</div><div class="d">Номера и коды по HTTP</div></div><div class="time">пн</div></div>
+</div>""")
+
+# B — big glass megaphone-like badge: channel avatar tile + subscribe button
+page("tgk_badge", """
+.card{position:absolute;right:110px;top:50%;transform:translateY(-50%);width:420px;padding:44px 40px;border-radius:40px;display:flex;flex-direction:column;align-items:center;text-align:center}
+.big{position:relative;width:150px;height:150px;border-radius:44px;background:linear-gradient(135deg,#5AC8FA,#1272D6);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:96px;box-shadow:0 20px 40px rgba(42,171,238,.35)}
+.big i{position:absolute;top:-12px;right:-12px;width:44px;height:44px;border-radius:50%;background:#E63946;border:6px solid #22356F}
+.nm{margin-top:26px;font-weight:900;font-size:40px}
+.mt{margin-top:8px;font-size:20px;font-weight:600}
+.btn{margin-top:28px;width:100%;padding:18px;border-radius:18px;background:#2AABEE;font-weight:800;font-size:22px;box-shadow:0 14px 30px rgba(42,171,238,.35)}
+""", """<div class="left"><div class="word">SMENA</div><div class="uline"></div><div class="sub">Официальный канал магазина</div></div>
+<div class="glass card"><div class="big">S<i></i></div><div class="nm">SMENA</div><div class="mt muted">новости и наличие номеров</div><div class="btn">Подписаться</div></div>""")
+json.dump(out, open('list.json', 'w'))
