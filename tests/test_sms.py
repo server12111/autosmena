@@ -317,3 +317,33 @@ async def test_active_numbers_are_checked_in_parallel(database, monkeypatch):
     await worker.cycle(None)
     # 16 checks x 0.2 s: one by one would take 3.2 s, with 8 at a time about 0.4 s.
     assert clock.monotonic() - started < 1.5
+
+
+@pytest.mark.parametrize(
+    "answer, expected",
+    [
+        ({"code": 1, "data": {"code": "48512", "code_time": "t1"}}, ("48512", "t1")),
+        ({"code": "1", "data": {"code": 48512}}, ("48512", "")),
+        ({"code": 1, "data": {"code": "01234"}}, ("01234", "")),
+        (
+            {"code": 1, "data": {"code": "", "sms": "Telegram code: 48512. Do not give it to anyone"}},
+            ("48512", ""),
+        ),
+        ({"code": 1, "data": {"content": "Your code is 123-456"}}, ("123456", "")),
+        ({"code": 1, "data": {"code": "Telegram code 77123"}}, ("77123", "")),
+        ({"code": 0, "data": {"code": ""}}, ("", "")),
+        ({"code": 0, "data": {"code": None, "expired_date": "2027-01-01"}}, ("", "")),
+    ],
+)
+def test_sms_code_is_found_in_any_supplier_format(answer, expected):
+    from app.supplier import parse_sms
+
+    assert parse_sms(answer) == expected
+
+
+def test_unknown_sms_answer_is_logged_without_the_link(caplog):
+    from app.supplier import parse_sms
+
+    with pytest.raises(ValueError):
+        parse_sms({"code": 1, "data": {"sms": "no digits here"}})
+    assert "Unrecognized SMS answer" in caplog.text and "token" not in caplog.text
