@@ -44,7 +44,9 @@ async def cycle(bot=None):
             try:
                 await (allocate_order(order_id) if status == "reserved" else refresh_order(order_id))
             except Exception as exc:
-                log.warning("Order check failed: id=%s type=%s", order_id, type(exc).__name__)
+                log.warning(
+                    "Order check failed: id=%s type=%s error=%s", order_id, type(exc).__name__, str(exc)[:200]
+                )
 
     async def payment_job(payment_id):
         async with limit:

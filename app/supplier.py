@@ -5,6 +5,7 @@ Any ambiguous result is held for reconciliation instead of retried.
 """
 
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass, field
@@ -19,6 +20,45 @@ from app.preferences import supplier_rate
 
 RENTAL_EXPIRY = 5  # UI: "Більше 60 днів"; OpenAPI: 60–80 days remaining.
 RENTAL_LABEL = "Больше 60 дней"
+
+
+SMS_TEXT_FIELDS = ("code", "sms", "content", "text", "msg", "message", "body")
+CODE_IN_FIELD = re.compile(r"(?<!\d)(\d{3,4}[- ]\d{3,4}|\d{3,12})(?!\d)")
+CODE_IN_TEXT = re.compile(r"(?<!\d)(\d{3}[- ]\d{3}|\d{4,8})(?!\d)")
+
+
+def parse_sms(result):
+    """Pull the login code out of a supplier /api/record answer.
+
+    The supplier does not document the format of an answer that carries a code: it may put the
+    digits in data.code, as a number or a string, or only inside the SMS text. Any of these is
+    accepted. An answer without digits means "no code yet"; anything unexpected is logged
+    (without the private link) so it can be fixed instead of silently failing."""
+    data = result.get("data") if isinstance(result, dict) else None
+    if not isinstance(data, dict):
+        data = result if isinstance(result, dict) else {}
+    for name in SMS_TEXT_FIELDS:
+        value = data.get(name)
+        if isinstance(value, bool) or value in (None, ""):
+            continue
+        found = (CODE_IN_FIELD if name == "code" else CODE_IN_TEXT).search(str(value))
+        if found:
+            code = re.sub(r"\D", "", found.group(1))
+            stamp = data.get("code_time") or data.get("time") or data.get("created_at") or ""
+            return code, str(stamp)[:128]
+    status = str(result.get("code", "")) if isinstance(result, dict) else ""
+    if status in ("0", "1", "") and not any(data.get(f) not in (None, "") for f in SMS_TEXT_FIELDS):
+        return "", ""  # Answer understood: no SMS yet.
+    shape = {key: type(value).__name__ for key, value in data.items()}
+    preview = {f: str(data.get(f))[:60] for f in SMS_TEXT_FIELDS if data.get(f) not in (None, "")}
+    logging.getLogger("smena.supplier").warning(
+        "Unrecognized SMS answer: code=%s msg=%s data=%s values=%s",
+        status,
+        str(result.get("msg", ""))[:80] if isinstance(result, dict) else "",
+        shape,
+        preview,
+    )
+    raise ValueError("Не удалось проверить входящие SMS")
 
 
 class Rejected(Exception):
@@ -162,22 +202,20 @@ class ApiccSupplier:
             or parsed.path != "/api/record"
             or parsed.fragment
         ):
+            logging.getLogger("smena.supplier").warning(
+                "SMS link rejected: scheme=%s host=%s path=%s", parsed.scheme, parsed.hostname, parsed.path
+            )
             raise ValueError("Не удалось проверить входящие SMS")
         async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
             response = await client.get(url)
             response.raise_for_status()
             if response.is_redirect:
+                logging.getLogger("smena.supplier").warning(
+                    "SMS link redirected: host=%s", urlsplit(response.headers.get("location", "")).hostname
+                )
                 raise ValueError("Не удалось проверить входящие SMS")
             result = response.json()
-        data = result.get("data")
-        if not isinstance(data, dict):
-            raise ValueError("Не удалось проверить входящие SMS")
-        code = data.get("code")
-        if result.get("code") == 0 and code in ("", None):
-            return "", ""
-        if result.get("code") != 1 or isinstance(code, bool) or not re.fullmatch(r"[0-9]{3,12}", str(code)):
-            raise ValueError("Не удалось проверить входящие SMS")
-        return str(code), str(data.get("code_time") or "")[:128]
+        return parse_sms(result)
 
     async def cancel(self, order):
         raise ValueError("Отмена этого номера недоступна. Обратитесь в поддержку")
