@@ -347,3 +347,30 @@ def test_unknown_sms_answer_is_logged_without_the_link(caplog):
     with pytest.raises(ValueError):
         parse_sms({"code": 1, "data": {"sms": "no digits here"}})
     assert "Unrecognized SMS answer" in caplog.text and "token" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "answer, expected",
+    [
+        ({"code": 1, "data": {"verify_code": 48512}}, "48512"),
+        ({"code": 1, "data": {"list": [{"smsText": "Telegram code 55123"}]}}, "55123"),
+        ({"code": 1, "data": {"code": "", "tel": "+17752953734", "code_time": "2026-11-03 10:00"}}, ""),
+        ({"code": 1, "data": {"count": 12345, "expired_date": "2027-01-01"}}, ""),
+    ],
+)
+def test_code_in_unknown_fields_but_not_phone_or_dates(answer, expected):
+    from app.supplier import parse_sms
+
+    assert parse_sms(answer)[0] == expected
+
+
+def test_supplier_answer_shown_to_admin_hides_links_and_tokens():
+    from app.supplier import sanitized
+
+    raw = {
+        "api": "https://api.sms8.net/api/record?token=secret",
+        "token": "abc",
+        "tel": "+1555",
+        "x": "https://y",
+    }
+    assert sanitized(raw) == {"api": "•••", "token": "•••", "tel": "+1555", "x": "•••"}
