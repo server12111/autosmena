@@ -225,3 +225,35 @@ async def test_admin_input_reports_unexpected_errors(admin, monkeypatch):
     message.bot = None
     await bot_admin.admin_input(message, state)
     assert "database is locked" in message.answer.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_admin_finds_order_by_phone_and_sees_supplier_answer(admin, monkeypatch):
+    with admin.begin() as db:
+        db.add(
+            Order(
+                id="p" * 32,
+                request_key="diag",
+                user_id=123,
+                product_id=1,
+                price=1,
+                cost=1,
+                status="active",
+                phone="17408509292",
+                supplier_id="ord-1",
+            )
+        )
+
+    async def diagnose(order):
+        return {"order": {"tel": order.phone, "api": "•••"}, "sms": {"code": 1, "data": {"code": ""}}}
+
+    monkeypatch.setattr(bot_admin, "supplier", SimpleNamespace(diagnose=diagnose, ready=True))
+    state = FakeState()
+    await bot_admin.admin_callback(click("adm:find"), state)
+    message = typed("+1 740 850 9292")
+    await bot_admin.admin_input(message, state)
+    assert "Заказ pppppppp" in message.answer.call_args.args[0]
+    query = click("adm:diag:" + "p" * 32)
+    await bot_admin.admin_callback(query, FakeState())
+    text = query.message.edit_text.call_args.args[0]
+    assert "Ответ поставщика" in text and "17408509292" in text and "token" not in text

@@ -234,6 +234,17 @@ def set_price(product_id, kind, text, admin_id):
         )
 
 
+def find_order_by_phone(text):
+    digits = "".join(ch for ch in text if ch.isdigit())
+    if len(digits) < 10:
+        return None
+    with Session() as db:
+        orders = db.scalars(select(Order).where(Order.phone != "").order_by(Order.created_at.desc())).all()
+    return next(
+        (o.id for o in orders if "".join(ch for ch in o.phone if ch.isdigit()).endswith(digits[-10:])), None
+    )
+
+
 def find_user(text):
     text = text.strip()
     with Session() as db:
@@ -440,6 +451,8 @@ async def order_card(message, order_id, edit=False):
     rows = []
     if o.status == "review":
         rows.append([("Вернуть деньги клиенту", f"adm:refundask:{o.id}", "cancel")])
+    if o.supplier_id and o.phone and o.status in ("waiting", "active", "expired"):
+        rows.append([("Ответ поставщика", f"adm:diag:{o.id}", "refresh")])
     rows.append([("Клиент", f"adm:u:{o.user_id}", "user"), ("На проверке", "adm:review", "cancel", "")])
     await show(
         message,
@@ -452,6 +465,27 @@ async def order_card(message, order_id, edit=False):
         + (f"\n<i>{escape(o.error)}</i>" if o.error else "")
         + ("\n\nЭто продление номера." if o.parent_id else ""),
         rows,
+        edit,
+    )
+
+
+async def diagnose_screen(message, order_id, edit=False):
+    import json
+
+    with Session() as db:
+        o = db.get(Order, order_id)
+    if not o or not o.supplier_id:
+        raise ValueError("Заказ не найден")
+    if not hasattr(supplier, "diagnose"):
+        raise ValueError("В тестовом режиме ответа поставщика нет")
+    raw = await supplier.diagnose(o)
+    text = json.dumps(raw, ensure_ascii=False, indent=1)[:3300]
+    await show(
+        message,
+        f"🔎 <b>Ответ поставщика · {escape(format_phone(o.phone))}</b>\n\n"
+        f"<pre>{escape(text)}</pre>\n"
+        "💡 Ссылки и токены скрыты. Если код в ответе есть, а в чат не пришёл — перешлите это сообщение.",
+        [[("Обновить", f"adm:diag:{o.id}", "refresh"), ("Заказ", f"adm:o:{o.id}", "phone", "")], [BACK]],
         edit,
     )
 
@@ -538,7 +572,7 @@ async def admin_callback(query: CallbackQuery, state: FSMContext):
             await state.update_data(admin_kind="find", admin_target="")
             await show(
                 message,
-                f"{icon('user')} Отправьте Telegram ID или @username пользователя.",
+                f"{icon('user')} Отправьте Telegram ID, @username пользователя или номер телефона заказа (+1…).",
                 [[("Отмена", "adm:home", "cancel", "")]],
                 edit=True,
             )
@@ -587,6 +621,8 @@ async def admin_callback(query: CallbackQuery, state: FSMContext):
             await review_list(message, edit=True)
         elif action == "o":
             await order_card(message, parts[1], edit=True)
+        elif action == "diag":
+            await diagnose_screen(message, parts[1], edit=True)
         elif action == "refundask":
             await show(
                 message,
@@ -627,9 +663,14 @@ async def admin_input(message: Message, state: FSMContext):
     kind, target, text = data.get("admin_kind"), data.get("admin_target"), (message.text or "").strip()
     try:
         if kind == "find":
-            user_id = find_user(text)
+            digits = "".join(ch for ch in text if ch.isdigit())
+            order_id = find_order_by_phone(text) if text.startswith("+") or len(digits) == 11 else None
+            user_id = None if order_id else find_user(text)
             await state.set_state(None)
-            await user_card(message, user_id)
+            if order_id:
+                await order_card(message, order_id)
+            else:
+                await user_card(message, user_id)
         elif kind == "name":
             rename(int(target), text, message.from_user.id)
             await state.set_state(None)

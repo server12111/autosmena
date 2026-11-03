@@ -27,6 +27,39 @@ CODE_IN_FIELD = re.compile(r"(?<!\d)(\d{3,4}[- ]\d{3,4}|\d{3,12})(?!\d)")
 CODE_IN_TEXT = re.compile(r"(?<!\d)(\d{3}[- ]\d{3}|\d{4,8})(?!\d)")
 
 
+NOT_CODE_KEYS = re.compile(
+    r"time|date|tel|phone|mobile|id$|^id|expire|token|api|url|link|count|num|price", re.I
+)
+
+
+CODE_KEYS = re.compile(r"code|sms|msg|verif|content|text|body", re.I)
+
+
+def flatten(value, prefix=""):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield from flatten(item, f"{prefix}.{key}" if prefix else str(key))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            yield from flatten(item, f"{prefix}[{index}]")
+    else:
+        yield prefix, value
+
+
+def sanitized(value):
+    """Supplier answer safe to show an admin: private links and tokens are masked."""
+    if isinstance(value, dict):
+        return {
+            key: "•••" if re.search("token|api|url|link", str(key), re.I) else sanitized(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [sanitized(item) for item in value]
+    if isinstance(value, str) and value.startswith("http"):
+        return "•••"
+    return value
+
+
 def parse_sms(result):
     """Pull the login code out of a supplier /api/record answer.
 
@@ -45,6 +78,17 @@ def parse_sms(result):
         if found:
             code = re.sub(r"\D", "", found.group(1))
             stamp = data.get("code_time") or data.get("time") or data.get("created_at") or ""
+            return code, str(stamp)[:128]
+    # Unknown field names: look through every other text value, skipping dates, ids and links.
+    for name, value in flatten(data):
+        if isinstance(value, bool) or not isinstance(value, (str, int)) or NOT_CODE_KEYS.search(name):
+            continue
+        found = CODE_IN_TEXT.search(str(value))
+        worded = isinstance(value, str) and re.search("[A-Za-zА-Яа-я]", value)
+        if found and (worded or CODE_KEYS.search(name)):
+            code = re.sub(r"\D", "", found.group(1))
+            stamp = data.get("code_time") or data.get("time") or data.get("created_at") or ""
+            logging.getLogger("smena.supplier").info("SMS code found in field %s", name)
             return code, str(stamp)[:128]
     status = str(result.get("code", "")) if isinstance(result, dict) else ""
     if status in ("0", "1", "") and not any(data.get(f) not in (None, "") for f in SMS_TEXT_FIELDS):
@@ -188,6 +232,21 @@ class ApiccSupplier:
             item["api"] = url
             item["_sms_code_time"] = code_time
         return State(status, sms=sms, payload=item)
+
+    async def diagnose(self, order):
+        """Raw (sanitized) supplier answers for one number, for the admin panel."""
+        data = await self.call("/api/v1/order/api", {"ordernum": order.supplier_id})
+        item = next((p for p in data["list"] if p["tel"] == order.phone), None)
+        record = None
+        url = (item or {}).get("api") or json.loads(order.supplier_payload or "{}").get("api")
+        if url:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+                response = await client.get(url)
+            try:
+                record = response.json()
+            except ValueError:
+                record = {"http": response.status_code, "text": response.text[:300]}
+        return {"order": sanitized(item), "sms": sanitized(record)}
 
     async def receive_sms(self, url):
         # These links contain private bearer tokens. Never expose them to customers,
